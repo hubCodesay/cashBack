@@ -814,24 +814,34 @@ class WCS_Cashback_Admin {
             'hide_empty' => false,
             'orderby'    => 'name',
         ));
+
+        // Preload all registered users for the dropdown
+        $all_users = get_users(array(
+            'number'  => 200,
+            'orderby' => 'display_name',
+            'order'   => 'ASC',
+            'fields'  => array('ID', 'display_name', 'user_email'),
+        ));
         ?>
         <div class="wrap">
             <h1>⭐ VIP Знижки для Клієнтів</h1>
-            <p class="description">Налаштуйте персональні знижки для VIP-клієнтів на певні категорії товарів.<br>
-                Коли VIP-клієнт купує товар із зазначеної категорії — він отримує знижку замість кешбеку на ці товари.</p>
+            <p class="description">Налаштуйте персональні знижки для VIP-клієнтів на певні категорії товарів або конкретні товари.<br>
+                Коли VIP-клієнт купує товар із зазначеної категорії або конкретний товар — він отримує знижку замість кешбеку.</p>
 
             <div class="wcs-info-box" style="border-left-color: #ff9800; margin-top: 15px;">
                 <h3>💡 Як це працює:</h3>
                 <ul style="margin-bottom: 0;">
-                    <li><strong>Додайте правило</strong> — виберіть клієнтів, категорії товарів та тип знижки</li>
-                    <li><strong>Знижка в %</strong> — зменшує ціну кожного товару з категорії на вказаний відсоток</li>
+                    <li><strong>Додайте правило</strong> — виберіть клієнтів, категорії товарів та/або конкретні товари, і тип знижки</li>
+                    <li><strong>Категорії</strong> — знижка діє на всі товари з обраних категорій</li>
+                    <li><strong>Конкретні товари</strong> — знижка діє тільки на обрані товари (можна комбінувати з категоріями)</li>
+                    <li><strong>Знижка в %</strong> — зменшує ціну кожного товару на вказаний відсоток</li>
                     <li><strong>Знижка в грн</strong> — зменшує ціну кожного товару на фіксовану суму</li>
                     <li><strong>Кешбек</strong> — на товари зі знижкою кешбек <u>не нараховується</u></li>
                 </ul>
             </div>
 
             <!-- ═══ ADD / EDIT RULE FORM ═══ -->
-            <div class="card" style="max-width: 800px; margin-top: 25px; padding: 24px;">
+            <div class="card" style="max-width: 850px; margin-top: 25px; padding: 24px;">
                 <h2 id="wcs-vip-form-title" style="margin-top: 0;">➕ Додати Нове Правило</h2>
                 <input type="hidden" id="wcs-vip-rule-index" value="">
 
@@ -839,8 +849,14 @@ class WCS_Cashback_Admin {
                     <tr>
                         <th><label>👤 Клієнти</label></th>
                         <td>
-                            <select id="wcs-vip-users" multiple="multiple" style="width: 100%; min-width: 350px;"></select>
-                            <p class="description">Почніть вводити ім'я або email клієнта для пошуку</p>
+                            <select id="wcs-vip-users" multiple="multiple" style="width: 100%; min-width: 350px;">
+                                <?php foreach ($all_users as $u) : ?>
+                                    <option value="<?php echo esc_attr($u->ID); ?>">
+                                        <?php echo esc_html($u->display_name); ?> (<?php echo esc_html($u->user_email); ?>)
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <p class="description">Виберіть клієнтів зі списку або почніть вводити ім'я / email для пошуку</p>
                         </td>
                     </tr>
                     <tr>
@@ -853,7 +869,14 @@ class WCS_Cashback_Admin {
                                     </option>
                                 <?php endforeach; ?>
                             </select>
-                            <p class="description">Виберіть категорії товарів, на які діє знижка</p>
+                            <p class="description">Знижка діє на <strong>всі</strong> товари з обраних категорій (необов'язково, якщо вибрано конкретні товари)</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th><label>🛒 Конкретні Товари</label></th>
+                        <td>
+                            <select id="wcs-vip-products" multiple="multiple" style="width: 100%; min-width: 350px;"></select>
+                            <p class="description">Почніть вводити назву товару для пошуку. Знижка діє тільки на обрані товари (необов'язково, якщо вибрано категорії)</p>
                         </td>
                     </tr>
                     <tr>
@@ -906,7 +929,7 @@ class WCS_Cashback_Admin {
                     <tr>
                         <th style="width: 40px;">№</th>
                         <th>👤 Клієнти</th>
-                        <th>📂 Категорії</th>
+                        <th>📂 Категорії / 🛒 Товари</th>
                         <th style="width: 130px;">💰 Знижка</th>
                         <th style="width: 160px;">🏷️ Мітка</th>
                         <th style="width: 80px;">Статус</th>
@@ -916,6 +939,10 @@ class WCS_Cashback_Admin {
                 <tbody>
                     <?php if (!empty($rules)) : ?>
                         <?php foreach ($rules as $i => $rule) : ?>
+                            <?php
+                            $rule_product_ids  = isset($rule['product_ids']) ? (array)$rule['product_ids'] : array();
+                            $rule_category_ids = isset($rule['category_ids']) ? (array)$rule['category_ids'] : array();
+                            ?>
                             <tr data-index="<?php echo $i; ?>">
                                 <td><strong><?php echo ($i + 1); ?></strong></td>
                                 <td>
@@ -932,14 +959,38 @@ class WCS_Cashback_Admin {
                                 </td>
                                 <td>
                                     <?php
-                                    $cat_names = array();
-                                    foreach ((array) $rule['category_ids'] as $cid) {
-                                        $term = get_term($cid, 'product_cat');
-                                        if ($term && !is_wp_error($term)) {
-                                            $cat_names[] = esc_html($term->name);
+                                    // Categories
+                                    if (!empty($rule_category_ids)) {
+                                        $cat_names = array();
+                                        foreach ($rule_category_ids as $cid) {
+                                            $term = get_term($cid, 'product_cat');
+                                            if ($term && !is_wp_error($term)) {
+                                                $cat_names[] = esc_html($term->name);
+                                            }
+                                        }
+                                        if (!empty($cat_names)) {
+                                            echo '<strong style="color:#1d2327;">📂 Категорії:</strong><br>' . implode(', ', $cat_names);
                                         }
                                     }
-                                    echo implode(', ', $cat_names);
+                                    // Products
+                                    if (!empty($rule_product_ids)) {
+                                        if (!empty($rule_category_ids)) {
+                                            echo '<hr style="margin:6px 0;border-color:#eee;">';
+                                        }
+                                        $prod_names = array();
+                                        foreach ($rule_product_ids as $pid) {
+                                            $p = wc_get_product($pid);
+                                            if ($p) {
+                                                $prod_names[] = esc_html($p->get_name());
+                                            }
+                                        }
+                                        if (!empty($prod_names)) {
+                                            echo '<strong style="color:#1d2327;">🛒 Товари:</strong><br>' . implode(', ', $prod_names);
+                                        }
+                                    }
+                                    if (empty($rule_category_ids) && empty($rule_product_ids)) {
+                                        echo '<span style="color:#999;">— не вказано —</span>';
+                                    }
                                     ?>
                                 </td>
                                 <td>
@@ -970,7 +1021,12 @@ class WCS_Cashback_Admin {
                                                 $u = get_userdata($uid);
                                                 return $u ? array('id' => $uid, 'text' => $u->display_name . ' (' . $u->user_email . ')') : null;
                                             }, (array)$rule['user_ids']))); ?>'
-                                            data-categories='<?php echo esc_attr(json_encode((array)$rule['category_ids'])); ?>'
+                                            data-categories='<?php echo esc_attr(json_encode($rule_category_ids)); ?>'
+                                            data-products='<?php echo esc_attr(json_encode(array_map(function($pid) {
+                                                $p = wc_get_product($pid);
+                                                $price_text = ($p && $p->get_price()) ? ' — ' . strip_tags(wc_price($p->get_price())) : '';
+                                                return $p ? array('id' => $pid, 'text' => $p->get_name() . $price_text . ' (ID: ' . $pid . ')') : null;
+                                            }, $rule_product_ids))); ?>'
                                             data-discount-type="<?php echo esc_attr($rule['discount_type']); ?>"
                                             data-discount-value="<?php echo esc_attr($rule['discount_value']); ?>"
                                             data-label="<?php echo esc_attr($rule['label']); ?>"
@@ -1000,6 +1056,7 @@ class WCS_Cashback_Admin {
             <div class="wcs-info-box" style="border-left-color: #4caf50; margin-top: 25px;">
                 <h3>📌 Важливо знати:</h3>
                 <ul style="margin-bottom: 0;">
+                    <li><strong>Категорії + Товари:</strong> Можна вибрати категорії, конкретні товари, або обидва варіанти одночасно</li>
                     <li><strong>Один клієнт — кілька правил:</strong> Якщо клієнт є в кількох правилах, знижки додаються</li>
                     <li><strong>Кешбек:</strong> На товари, які отримали VIP-знижку, кешбек не нараховується</li>
                     <li><strong>Видимість:</strong> Клієнт бачить знижку в кошику як "VIP Знижка" (або вашу мітку)</li>
@@ -1011,8 +1068,16 @@ class WCS_Cashback_Admin {
         <!-- ═══ INLINE SCRIPT FOR VIP ADMIN (Select2 + AJAX) ═══ -->
         <script type="text/javascript">
         jQuery(document).ready(function($) {
-            // Initialize Select2 for user search
+
+            // ── Select2: Users (preloaded dropdown + search via AJAX) ──
             $('#wcs-vip-users').select2({
+                placeholder: 'Виберіть клієнтів зі списку або шукайте...',
+                allowClear: true,
+                language: {
+                    noResults: function() { return 'Клієнтів не знайдено'; },
+                    searching: function() { return 'Пошук...'; }
+                },
+                // Also allow AJAX search for users beyond the preloaded 200
                 ajax: {
                     url: wcs_admin.ajax_url,
                     dataType: 'json',
@@ -1029,20 +1094,43 @@ class WCS_Cashback_Admin {
                     },
                     cache: true
                 },
-                minimumInputLength: 2,
-                placeholder: 'Шукати клієнта за іменем або email...',
+                minimumInputLength: 0
+            });
+
+            // ── Select2: Categories (static, preloaded) ──
+            $('#wcs-vip-categories').select2({
+                placeholder: 'Виберіть категорії...',
+                allowClear: true,
                 language: {
-                    inputTooShort: function() { return 'Введіть хоча б 2 символи...'; },
-                    noResults:     function() { return 'Клієнтів не знайдено'; },
-                    searching:     function() { return 'Пошук...'; }
+                    noResults: function() { return 'Категорій не знайдено'; }
                 }
             });
 
-            // Initialize Select2 for categories
-            $('#wcs-vip-categories').select2({
-                placeholder: 'Виберіть категорії...',
+            // ── Select2: Products (AJAX search) ──
+            $('#wcs-vip-products').select2({
+                ajax: {
+                    url: wcs_admin.ajax_url,
+                    dataType: 'json',
+                    delay: 300,
+                    data: function(params) {
+                        return {
+                            action: 'wcs_search_products',
+                            nonce: wcs_admin.nonce,
+                            term: params.term
+                        };
+                    },
+                    processResults: function(data) {
+                        return { results: data };
+                    },
+                    cache: true
+                },
+                minimumInputLength: 2,
+                placeholder: 'Шукати товар за назвою...',
+                allowClear: true,
                 language: {
-                    noResults: function() { return 'Категорій не знайдено'; }
+                    inputTooShort: function() { return 'Введіть хоча б 2 символи для пошуку товару...'; },
+                    noResults:     function() { return 'Товарів не знайдено'; },
+                    searching:     function() { return 'Пошук товарів...'; }
                 }
             });
 
@@ -1056,15 +1144,16 @@ class WCS_Cashback_Admin {
             $('#wcs-vip-save-btn').on('click', function() {
                 var $btn = $(this);
                 var $status = $('#wcs-vip-save-status');
-                var userIds = $('#wcs-vip-users').val();
-                var catIds  = $('#wcs-vip-categories').val();
+                var userIds    = $('#wcs-vip-users').val() || [];
+                var catIds     = $('#wcs-vip-categories').val() || [];
+                var productIds = $('#wcs-vip-products').val() || [];
 
-                if (!userIds || userIds.length === 0) {
+                if (userIds.length === 0) {
                     $status.html('<span style="color:#d63638;">❌ Виберіть клієнтів</span>');
                     return;
                 }
-                if (!catIds || catIds.length === 0) {
-                    $status.html('<span style="color:#d63638;">❌ Виберіть категорії</span>');
+                if (catIds.length === 0 && productIds.length === 0) {
+                    $status.html('<span style="color:#d63638;">❌ Виберіть хоча б одну категорію або товар</span>');
                     return;
                 }
 
@@ -1082,6 +1171,7 @@ class WCS_Cashback_Admin {
                     nonce: wcs_admin.nonce,
                     user_ids: userIds,
                     category_ids: catIds,
+                    product_ids: productIds,
                     discount_type: $('#wcs-vip-discount-type').val(),
                     discount_value: discountVal,
                     label: $('#wcs-vip-label').val(),
@@ -1111,22 +1201,40 @@ class WCS_Cashback_Admin {
                 $('#wcs-vip-rule-index').val(index);
                 $('#wcs-vip-cancel-btn').show();
 
-                // Fill users
+                // Fill users — set selected values from preloaded options
                 var users = $btn.data('users');
                 var $userSelect = $('#wcs-vip-users');
-                $userSelect.empty();
+                // First, ensure all needed options exist
                 if (users && Array.isArray(users)) {
+                    var selectedIds = [];
                     users.forEach(function(u) {
                         if (u) {
-                            $userSelect.append(new Option(u.text, u.id, true, true));
+                            // Check if option already exists in preloaded list
+                            if ($userSelect.find('option[value="' + u.id + '"]').length === 0) {
+                                $userSelect.append(new Option(u.text, u.id, false, false));
+                            }
+                            selectedIds.push(u.id.toString());
                         }
                     });
+                    $userSelect.val(selectedIds).trigger('change');
                 }
-                $userSelect.trigger('change');
 
                 // Fill categories
                 var cats = $btn.data('categories');
                 $('#wcs-vip-categories').val(cats).trigger('change');
+
+                // Fill products
+                var products = $btn.data('products');
+                var $productSelect = $('#wcs-vip-products');
+                $productSelect.empty();
+                if (products && Array.isArray(products)) {
+                    products.forEach(function(p) {
+                        if (p) {
+                            $productSelect.append(new Option(p.text, p.id, true, true));
+                        }
+                    });
+                }
+                $productSelect.trigger('change');
 
                 // Fill discount
                 $('#wcs-vip-discount-type').val($btn.data('discount-type')).trigger('change');
@@ -1144,6 +1252,7 @@ class WCS_Cashback_Admin {
                 $('#wcs-vip-cancel-btn').hide();
                 $('#wcs-vip-users').val(null).trigger('change');
                 $('#wcs-vip-categories').val(null).trigger('change');
+                $('#wcs-vip-products').val(null).trigger('change');
                 $('#wcs-vip-discount-value').val('');
                 $('#wcs-vip-label').val('');
                 $('#wcs-vip-save-status').html('');
@@ -1167,7 +1276,6 @@ class WCS_Cashback_Admin {
                     if (response.success) {
                         $btn.closest('tr').fadeOut(300, function() {
                             $(this).remove();
-                            // Check if table is empty
                             if ($('#wcs-vip-rules-table tbody tr').length === 0) {
                                 location.reload();
                             }
@@ -1183,3 +1291,4 @@ class WCS_Cashback_Admin {
         <?php
     }
 }
+
