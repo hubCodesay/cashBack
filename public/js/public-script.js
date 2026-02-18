@@ -82,12 +82,20 @@
 		var selectors = [
 			// Cart: after the totals footer item (Total row)
 			'.wc-block-components-totals-footer-item:last',
+			'.wc-block-cart__totals-footer',
 			// Cart: inside the sidebar
 			'.wc-block-cart__totals .wp-block-woocommerce-cart-totals-block',
 			'.wc-block-cart__sidebar',
+			'.wc-block-cart__sidebar-container',
 			// Checkout: order summary
 			'.wp-block-woocommerce-checkout-order-summary-block',
-			'.wc-block-checkout__sidebar'
+			'.wc-block-checkout__sidebar',
+			'.wc-block-components-checkout-step--summary',
+			'.wc-block-components-order-summary',
+			// Universal fallbacks
+			'.wc-block-components-totals-wrapper',
+			'.wc-block-checkout__order-summary-title',
+			'.wc-block-cart__totals-title'
 		];
 
 		for (var i = 0; i < selectors.length; i++) {
@@ -125,13 +133,25 @@
 	 *  MUTATION OBSERVER — re-inject after blocks re-render
 	 * ═══════════════════════════════════════════════════════ */
 	function startObserving() {
-		var container =
-			document.querySelector('.wp-block-woocommerce-cart') ||
-			document.querySelector('.wp-block-woocommerce-checkout') ||
-			document.querySelector('.wc-block-cart') ||
-			document.querySelector('.wc-block-checkout');
+		var containerSelectors = [
+			'.wp-block-woocommerce-cart',
+			'.wp-block-woocommerce-checkout',
+			'.wc-block-cart',
+			'.wc-block-checkout',
+			'.wc-block-components-sidebar', // Some themes use sidebar for everything
+			'#remote-checkout-form'         // Custom checkout plugins
+		];
 
-		if (!container) return;
+		var container = null;
+		for (var i = 0; i < containerSelectors.length; i++) {
+			container = document.querySelector(containerSelectors[i]);
+			if (container) break;
+		}
+
+		if (!container) {
+			// Fallback: observe the main content area if we can't find a specific container
+			container = document.querySelector('.entry-content') || document.querySelector('#content') || document.body;
+		}
 
 		var observer = new MutationObserver(function () {
 			if (debounceTimer) clearTimeout(debounceTimer);
@@ -142,7 +162,7 @@
 				if (needsBlock || needsEarning) {
 					refreshViaAjax();
 				}
-			}, 600);
+			}, 800); // Slightly longer debounce for slower themes
 		});
 
 		observer.observe(container, { childList: true, subtree: true });

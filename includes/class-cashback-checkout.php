@@ -65,8 +65,18 @@ class WCS_Cashback_Checkout {
 
 		// ── Order meta & processing ─────────────────────────
 		add_action('woocommerce_checkout_create_order', array($this, 'save_cashback_to_order'), 20, 2);
+		// Fallback: also ensure meta is saved when order is created via store API (blocks checkout)
+		add_action('woocommerce_store_api_checkout_order_processed', array($this, 'save_cashback_to_order_fallback'));
+
+		// ── UNIVERSAL: multiple hooks for cashback earning ──
+		// Different payment gateways trigger different hooks/statuses.
+		// We hook into all common ones and use _wcs_cashback_processed to prevent double-processing.
 		add_action('woocommerce_payment_complete', array($this, 'process_cashback_on_payment'));
 		add_action('woocommerce_order_status_completed', array($this, 'process_cashback_on_payment'));
+		add_action('woocommerce_order_status_processing', array($this, 'process_cashback_on_payment'));
+		add_action('woocommerce_order_status_on-hold', array($this, 'process_cashback_on_payment'));
+		// Universal fallback: catch ANY paid status transition
+		add_action('woocommerce_order_status_changed', array($this, 'process_cashback_on_status_change'), 20, 3);
 
 		// ── AJAX ────────────────────────────────────────────
 		add_action('wp_ajax_wcs_apply_cashback', array($this, 'ajax_apply_cashback'));
@@ -141,12 +151,56 @@ class WCS_Cashback_Checkout {
 		$percentage = WCS_Cashback_Calculator::get_percentage($subtotal);
 		$potential = WCS_Cashback_Calculator::calculate($subtotal);
 
+		echo '<tr class="wcs-potential-earning-row">';
+		echo '<th>' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</th>';
 		if ($potential > 0) {
-			echo '<tr class="wcs-potential-earning-row">';
-			echo '<th>' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</th>';
 			echo '<td><span class="wcs-earn-amount">+' . wc_price($potential) . '</span> <small style="color:#999;">(' . $percentage . '%)</small></td>';
-			echo '</tr>';
+		} else {
+			// Show next tier info so customer knows how much more to spend
+			$next_tier = $this->get_next_tier_info($subtotal);
+			if ($next_tier) {
+				$diff = $next_tier['threshold'] - $subtotal;
+				echo '<td><span class="wcs-earn-hint">'
+					. sprintf(
+						__('Додайте ще %s і отримайте %s%% кешбеку', 'woo-cashback-system'),
+						wc_price($diff),
+						$next_tier['percentage']
+					)
+					. '</span></td>';
+			} else {
+				echo '<td><span class="wcs-no-earning">—</span></td>';
+			}
 		}
+		echo '</tr>';
+	}
+
+	/**
+	 * Get info about the next (lowest) tier above the given subtotal
+	 * Returns array('threshold' => ..., 'percentage' => ...) or null if no tier above
+	 */
+	private function get_next_tier_info($subtotal) {
+		if (!class_exists('WCS_Cashback_Calculator')) {
+			return null;
+		}
+
+		$tiers = WCS_Cashback_Calculator::get_tiers_info();
+		if (empty($tiers)) {
+			return null;
+		}
+
+		// Sort by threshold ascending
+		usort($tiers, function($a, $b) {
+			return $a['threshold'] - $b['threshold'];
+		});
+
+		// Find the first tier whose threshold is above subtotal
+		foreach ($tiers as $tier) {
+			if ($subtotal < $tier['threshold']) {
+				return $tier;
+			}
+		}
+
+		return null; // already at or above all thresholds
 	}
 
 	/* ═══════════════════════════════════════════════════════
@@ -332,6 +386,22 @@ class WCS_Cashback_Checkout {
 				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
 				. '<span class="wcs-earn-amount">+' . wc_price($potential) . '</span> <small>(' . $percentage . '%)</small>'
 				. '</div>';
+		} else {
+			// Show next tier hint
+			$next_tier = $this->get_next_tier_info($subtotal);
+			if ($next_tier) {
+				$diff = $next_tier['threshold'] - $subtotal;
+				$earning_html = '<div class="wcs-potential-earning-block">'
+					. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
+					. '<span class="wcs-earn-hint">'
+					. sprintf(
+						__('Додайте ще %s і отримайте %s%% кешбеку', 'woo-cashback-system'),
+						wc_price($diff),
+						$next_tier['percentage']
+					)
+					. '</span>'
+					. '</div>';
+			}
 		}
 
 		$data = array(
@@ -394,6 +464,22 @@ class WCS_Cashback_Checkout {
 				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
 				. '<span class="wcs-earn-amount">+' . wc_price($potential) . '</span> <small>(' . $percentage . '%)</small>'
 				. '</div>';
+		} else {
+			// Show next tier hint
+			$next_tier = $this->get_next_tier_info($cart_subtotal);
+			if ($next_tier) {
+				$diff = $next_tier['threshold'] - $cart_subtotal;
+				$earning_html = '<div class="wcs-potential-earning-block">'
+					. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
+					. '<span class="wcs-earn-hint">'
+					. sprintf(
+						__('Додайте ще %s і отримайте %s%% кешбеку', 'woo-cashback-system'),
+						wc_price($diff),
+						$next_tier['percentage']
+					)
+					. '</span>'
+					. '</div>';
+			}
 		}
 
 		wp_send_json_success(array(
@@ -534,6 +620,31 @@ class WCS_Cashback_Checkout {
 		$this->set_applied_amount(0);
 	}
 
+	/**
+	 * Fallback: save cashback meta for Store API / Blocks checkout
+	 * Called when woocommerce_store_api_checkout_order_processed fires
+	 */
+	public function save_cashback_to_order_fallback($order) {
+		// Only run if meta was NOT already set by save_cashback_to_order
+		$existing = $order->get_meta('_wcs_cashback_skip_earning', true);
+		if ($existing !== '' && $existing !== null) {
+			return; // already handled
+		}
+
+		$applied = $this->get_applied_amount();
+
+		if ($applied > 0) {
+			$order->update_meta_data('_wcs_cashback_used', $applied);
+			$order->update_meta_data('_wcs_cashback_skip_earning', 'yes');
+		} else {
+			$order->update_meta_data('_wcs_cashback_used', 0);
+			$order->update_meta_data('_wcs_cashback_skip_earning', 'no');
+		}
+
+		$order->save();
+		$this->set_applied_amount(0);
+	}
+
 	/* ═══════════════════════════════════════════════════════
 	 *  PAYMENT — Process cashback on completed payment
 	 *
@@ -556,8 +667,34 @@ class WCS_Cashback_Checkout {
 			return;
 		}
 
-		$cashback_used   = floatval($order->get_meta('_wcs_cashback_used', true));
-		$skip_earning    = $order->get_meta('_wcs_cashback_skip_earning', true);
+		$cashback_used = floatval($order->get_meta('_wcs_cashback_used', true));
+		$skip_earning  = $order->get_meta('_wcs_cashback_skip_earning', true);
+
+		// ── UNIVERSAL FIX: if skip_earning meta is missing, default to 'no' ──
+		// This handles cases where woocommerce_checkout_create_order didn't fire
+		// (e.g. blocks checkout, store API, or custom gateway integrations)
+		if ($skip_earning === '' || $skip_earning === null || $skip_earning === false) {
+			// Check if there's a cashback fee in the order (negative fee = cashback used)
+			$has_cashback_fee = false;
+			foreach ($order->get_fees() as $fee) {
+				if (strpos(strtolower($fee->get_name()), 'кешбек') !== false || strpos(strtolower($fee->get_name()), 'cashback') !== false) {
+					if (floatval($fee->get_total()) < 0) {
+						$has_cashback_fee = true;
+						$cashback_used = abs(floatval($fee->get_total()));
+					}
+				}
+			}
+
+			if ($has_cashback_fee && $cashback_used > 0) {
+				$skip_earning = 'yes';
+				$order->update_meta_data('_wcs_cashback_used', $cashback_used);
+				$order->update_meta_data('_wcs_cashback_skip_earning', 'yes');
+			} else {
+				$skip_earning = 'no';
+				$order->update_meta_data('_wcs_cashback_used', 0);
+				$order->update_meta_data('_wcs_cashback_skip_earning', 'no');
+			}
+		}
 
 		// ── 1. Deduct used cashback ──
 		if ($cashback_used > 0) {
@@ -622,6 +759,23 @@ class WCS_Cashback_Checkout {
 		// Mark as processed
 		$order->update_meta_data('_wcs_cashback_processed', 'yes');
 		$order->save();
+	}
+
+	/**
+	 * Universal handler: process cashback on ANY status change to a paid status
+	 * This catches custom statuses and edge cases missed by individual hooks
+	 */
+	public function process_cashback_on_status_change($order_id, $old_status, $new_status) {
+		// List of statuses that count as "paid"
+		$paid_statuses = array('processing', 'completed', 'on-hold');
+		
+		// Allow themes/plugins to add custom paid statuses
+		$paid_statuses = apply_filters('wcs_cashback_paid_statuses', $paid_statuses);
+
+		if (in_array($new_status, $paid_statuses)) {
+			// process_cashback_on_payment already has double-processing protection
+			$this->process_cashback_on_payment($order_id);
+		}
 	}
 
 	/* ═══════════════════════════════════════════════════════

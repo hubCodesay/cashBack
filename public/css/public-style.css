@@ -330,6 +330,27 @@
     color: var(--wcs-text-light, #999);
 }
 
+/* ── Earn hint (next tier info) ── */
+.wcs-earn-hint {
+    color: #92400e;
+    font-weight: 500;
+    font-size: 13px;
+    background: #fffbeb;
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid #fde68a;
+    display: inline-block;
+}
+
+.wcs-potential-earning-row .wcs-earn-hint {
+    display: inline-block;
+    margin-top: 2px;
+}
+
+.wcs-potential-earning-block .wcs-earn-hint {
+    display: inline-block;
+}
+
 /* ═══════════════════════════════════════════════════════════════
  *  DASHBOARD WIDGET (My Account)
  * ═══════════════════════════════════════════════════════════════ */
