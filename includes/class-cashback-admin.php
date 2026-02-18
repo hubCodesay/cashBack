@@ -25,6 +25,10 @@ class WCS_Cashback_Admin {
         add_action('admin_init', array($this, 'register_settings'));
         add_action('wp_ajax_wcs_update_user_balance', array($this, 'ajax_update_user_balance'));
         add_action('wp_ajax_wcs_reset_user_balance', array($this, 'ajax_reset_user_balance'));
+        
+        // New search endpoints for rules
+        add_action('wp_ajax_wcs_search_brands',   array($this, 'ajax_search_brands'));
+        add_action('wp_ajax_wcs_search_products', array($this, 'ajax_search_products'));
     }
     
     /**
@@ -132,9 +136,25 @@ class WCS_Cashback_Admin {
         if (isset($input['enable_notifications'])) $sanitized['enable_notifications'] = 'yes';
         elseif (isset($_POST['_wp_http_referer']) && strpos($_POST['_wp_http_referer'], 'tab=general') !== false) $sanitized['enable_notifications'] = 'no';
         
-        // Display Settings
-        if (isset($input['cart_position'])) $sanitized['cart_position'] = sanitize_text_field($input['cart_position']);
-        if (isset($input['checkout_position'])) $sanitized['checkout_position'] = sanitize_text_field($input['checkout_position']);
+        // Brand Rules (Repeater)
+        if (isset($input['brand_rules']) && is_array($input['brand_rules'])) {
+            $sanitized_rules = array();
+            foreach ($input['brand_rules'] as $rule) {
+                $sanitized_rules[] = array(
+                    'type'       => in_array($rule['type'], array('brand', 'product')) ? $rule['type'] : 'brand',
+                    'ids'        => isset($rule['ids']) ? array_map('intval', (array) $rule['ids']) : array(),
+                    'percentage' => floatval($rule['percentage'])
+                );
+            }
+            $sanitized['brand_rules'] = $sanitized_rules;
+        } else {
+            $sanitized['brand_rules'] = array();
+        }
+
+        if (isset($input['brand_taxonomy'])) $sanitized['brand_taxonomy'] = sanitize_text_field($input['brand_taxonomy']);
+        if (isset($input['default_percentage'])) $sanitized['default_percentage'] = floatval($input['default_percentage']);
+        if (isset($input['use_brands_logic'])) $sanitized['use_brands_logic'] = 'yes';
+        else $sanitized['use_brands_logic'] = 'no';
         
         return $sanitized;
     }
@@ -166,13 +186,22 @@ class WCS_Cashback_Admin {
                 'enable_notifications' => 'yes',
                 // New display settings
                 'cart_position' => 'woocommerce_cart_totals_before_order_total',
-                'checkout_position' => 'woocommerce_review_order_before_payment'
+                'checkout_position' => 'woocommerce_review_order_before_payment',
+                // New brand settings
+                'use_brands_logic' => 'no',
+                'brand_taxonomy' => 'product_brand',
+                'brand_rules' => array(),
+                'default_percentage' => 5
             );
         }
         
         // Ensure defaults for new settings exist (for existing installs)
         $settings['cart_position'] = isset($settings['cart_position']) ? $settings['cart_position'] : 'woocommerce_cart_totals_before_order_total';
         $settings['checkout_position'] = isset($settings['checkout_position']) ? $settings['checkout_position'] : 'woocommerce_review_order_before_payment';
+        $settings['use_brands_logic'] = isset($settings['use_brands_logic']) ? $settings['use_brands_logic'] : 'no';
+        $settings['brand_taxonomy'] = isset($settings['brand_taxonomy']) ? $settings['brand_taxonomy'] : 'product_brand';
+        $settings['brand_rules'] = isset($settings['brand_rules']) ? (array)$settings['brand_rules'] : array();
+        $settings['default_percentage'] = isset($settings['default_percentage']) ? floatval($settings['default_percentage']) : 5;
         
         ?>
         <div class="wrap">
@@ -181,6 +210,7 @@ class WCS_Cashback_Admin {
             
             <h2 class="nav-tab-wrapper">
                 <a href="?page=wcs-cashback&tab=general" class="nav-tab <?php echo $active_tab == 'general' ? 'nav-tab-active' : ''; ?>">🛠️ Загальні</a>
+                <a href="?page=wcs-cashback&tab=brands" class="nav-tab <?php echo $active_tab == 'brands' ? 'nav-tab-active' : ''; ?>">🏷️ Бренди</a>
                 <a href="?page=wcs-cashback&tab=display" class="nav-tab <?php echo $active_tab == 'display' ? 'nav-tab-active' : ''; ?>">🎨 Вигляд</a>
             </h2>
             
@@ -193,7 +223,7 @@ class WCS_Cashback_Admin {
                 if ($active_tab == 'general'):
                 ?>
                 
-                <!-- GENERAL TAB CONTENT (Existing) -->
+                <!-- GENERAL TAB CONTENT -->
                 <table class="form-table">
                     <tr>
                         <th scope="row">
@@ -201,182 +231,173 @@ class WCS_Cashback_Admin {
                         </th>
                         <td>
                             <input type="checkbox" name="wcs_cashback_settings[enabled]" id="enabled" value="yes" <?php checked($settings['enabled'], 'yes'); ?>>
-                            <p class="description">
-                                ✅ Увімкніть цей параметр, щоб активувати систему кешбеку для всіх користувачів.<br>
-                                ❌ Якщо вимкнено - користувачі не зможуть заробляти або використовувати кешбек.
-                            </p>
+                            <p class="description">✅ Увімкніть цей параметр, щоб активувати систему кешбеку для всіх користувачів.</p>
                         </td>
                     </tr>
                     
                     <tr>
                         <th colspan="2">
                             <h2>🎯 Рівні Кешбеку (Тарифи)</h2>
-                            <p class="description">Налаштуйте відсотки кешбеку залежно від суми замовлення. Чим більше замовлення, тим більший відсоток кешбеку отримає клієнт.</p>
+                            <p class="description">Налаштуйте відсотки кешбеку залежно від суми замовлення.</p>
                         </th>
                     </tr>
                     
                     <tr style="background: #f0f9ff;">
-                        <th scope="row">
-                            <label for="tier_1_threshold">🥉 Рівень 1: Мінімальна сума замовлення (грн)</label>
-                        </th>
-                        <td>
-                            <input type="number" step="0.01" name="wcs_cashback_settings[tier_1_threshold]" id="tier_1_threshold" value="<?php echo esc_attr($settings['tier_1_threshold']); ?>" class="regular-text" style="width: 200px;">
-                            <p class="description">
-                                💡 <strong>Що це:</strong> Мінімальна сума замовлення, при якій клієнт почне отримувати кешбек.<br>
-                                📌 <strong>Рекомендація:</strong> 500 грн - це базовий поріг для початку нарахування кешбеку.
-                            </p>
-                        </td>
+                        <th scope="row"><label for="tier_1_threshold">🥉 Рівень 1: Сума (грн)</label></th>
+                        <td><input type="number" step="0.01" name="wcs_cashback_settings[tier_1_threshold]" id="tier_1_threshold" value="<?php echo esc_attr($settings['tier_1_threshold']); ?>" style="width: 150px;"></td>
                     </tr>
-                    
                     <tr style="background: #f0f9ff;">
-                        <th scope="row">
-                            <label for="tier_1_percentage">🥉 Рівень 1: Відсоток кешбеку (%)</label>
-                        </th>
-                        <td>
-                            <input type="number" step="0.01" name="wcs_cashback_settings[tier_1_percentage]" id="tier_1_percentage" value="<?php echo esc_attr($settings['tier_1_percentage']); ?>" class="regular-text" style="width: 200px;">
-                            <p class="description">
-                                💡 <strong>Що це:</strong> Скільки відсотків від суми замовлення повернеться клієнту як кешбек.
-                            </p>
-                        </td>
+                        <th scope="row"><label for="tier_1_percentage">🥉 Рівень 1: Відсоток (%)</label></th>
+                        <td><input type="number" step="0.01" name="wcs_cashback_settings[tier_1_percentage]" id="tier_1_percentage" value="<?php echo esc_attr($settings['tier_1_percentage']); ?>" style="width: 150px;"></td>
                     </tr>
-                    
+
                     <tr style="background: #fff8e1;">
-                        <th scope="row">
-                            <label for="tier_2_threshold">🥈 Рівень 2: Мінімальна сума замовлення (грн)</label>
-                        </th>
-                        <td>
-                            <input type="number" step="0.01" name="wcs_cashback_settings[tier_2_threshold]" id="tier_2_threshold" value="<?php echo esc_attr($settings['tier_2_threshold']); ?>" class="regular-text" style="width: 200px;">
-                        </td>
+                        <th scope="row"><label for="tier_2_threshold">🥈 Рівень 2: Сума (грн)</label></th>
+                        <td><input type="number" step="0.01" name="wcs_cashback_settings[tier_2_threshold]" id="tier_2_threshold" value="<?php echo esc_attr($settings['tier_2_threshold']); ?>" style="width: 150px;"></td>
                     </tr>
-                    
                     <tr style="background: #fff8e1;">
-                        <th scope="row">
-                            <label for="tier_2_percentage">🥈 Рівень 2: Відсоток кешбеку (%)</label>
-                        </th>
-                        <td>
-                            <input type="number" step="0.01" name="wcs_cashback_settings[tier_2_percentage]" id="tier_2_percentage" value="<?php echo esc_attr($settings['tier_2_percentage']); ?>" class="regular-text" style="width: 200px;">
-                        </td>
+                        <th scope="row"><label for="tier_2_percentage">🥈 Рівень 2: Відсоток (%)</label></th>
+                        <td><input type="number" step="0.01" name="wcs_cashback_settings[tier_2_percentage]" id="tier_2_percentage" value="<?php echo esc_attr($settings['tier_2_percentage']); ?>" style="width: 150px;"></td>
                     </tr>
-                    
+
                     <tr style="background: #e8f5e9;">
-                        <th scope="row">
-                            <label for="tier_3_threshold">🥇 Рівень 3: Мінімальна сума замовлення (грн)</label>
-                        </th>
-                        <td>
-                            <input type="number" step="0.01" name="wcs_cashback_settings[tier_3_threshold]" id="tier_3_threshold" value="<?php echo esc_attr($settings['tier_3_threshold']); ?>" class="regular-text" style="width: 200px;">
-                        </td>
+                        <th scope="row"><label for="tier_3_threshold">🥇 Рівень 3: Сума (грн)</label></th>
+                        <td><input type="number" step="0.01" name="wcs_cashback_settings[tier_3_threshold]" id="tier_3_threshold" value="<?php echo esc_attr($settings['tier_3_threshold']); ?>" style="width: 150px;"></td>
                     </tr>
-                    
                     <tr style="background: #e8f5e9;">
-                        <th scope="row">
-                            <label for="tier_3_percentage">🥇 Рівень 3: Відсоток кешбеку (%)</label>
-                        </th>
-                        <td>
-                            <input type="number" step="0.01" name="wcs_cashback_settings[tier_3_percentage]" id="tier_3_percentage" value="<?php echo esc_attr($settings['tier_3_percentage']); ?>" class="regular-text" style="width: 200px;">
-                        </td>
+                        <th scope="row"><label for="tier_3_percentage">🥇 Рівень 3: Відсоток (%)</label></th>
+                        <td><input type="number" step="0.01" name="wcs_cashback_settings[tier_3_percentage]" id="tier_3_percentage" value="<?php echo esc_attr($settings['tier_3_percentage']); ?>" style="width: 150px;"></td>
                     </tr>
                     
                     <tr>
-                        <th colspan="2">
-                            <h2>🛡️ Обмеження та Ліміти</h2>
-                        </th>
+                        <th colspan="2"><h2>🛡️ Обмеження та Ліміти</h2></th>
                     </tr>
-                    
                     <tr>
-                        <th scope="row">
-                            <label for="max_cashback_limit">💰 Максимальний Ліміт Накопичення (грн)</label>
-                        </th>
-                        <td>
-                            <input type="number" step="0.01" name="wcs_cashback_settings[max_cashback_limit]" id="max_cashback_limit" value="<?php echo esc_attr($settings['max_cashback_limit']); ?>" class="regular-text" style="width: 200px;">
-                            <p class="description">Максимальна сума на балансі.</p>
-                        </td>
+                        <th scope="row"><label for="max_cashback_limit">💰 Макс. Ліміт Накопичення (грн)</label></th>
+                        <td><input type="number" step="0.01" name="wcs_cashback_settings[max_cashback_limit]" id="max_cashback_limit" value="<?php echo esc_attr($settings['max_cashback_limit']); ?>" style="width: 150px;"></td>
                     </tr>
-                    
                     <tr>
-                        <th scope="row">
-                            <label for="usage_limit_percentage">🎯 Ліміт Використання за Одне Замовлення (%)</label>
-                        </th>
-                        <td>
-                            <input type="number" step="0.01" name="wcs_cashback_settings[usage_limit_percentage]" id="usage_limit_percentage" value="<?php echo esc_attr($settings['usage_limit_percentage']); ?>" class="regular-text" style="width: 200px;">
-                            <p class="description">Відсоток від суми замовлення, який можна оплатити кешбеком.</p>
-                        </td>
-                    </tr>
-                    
-                    <tr>
-                        <th scope="row">
-                            <label for="enable_notifications">✉️ Увімкнути Email-Сповіщення</label>
-                        </th>
-                        <td>
-                            <input type="checkbox" name="wcs_cashback_settings[enable_notifications]" id="enable_notifications" value="yes" <?php checked($settings['enable_notifications'], 'yes'); ?>>
-                            <p class="description">Сповіщати клієнтів про нарахування та списання.</p>
-                        </td>
+                        <th scope="row"><label for="usage_limit_percentage">🎯 Ліміт Використання (%)</label></th>
+                        <td><input type="number" step="0.01" name="wcs_cashback_settings[usage_limit_percentage]" id="usage_limit_percentage" value="<?php echo esc_attr($settings['usage_limit_percentage']); ?>" style="width: 150px;"></td>
                     </tr>
                 </table>
+
+                <?php elseif ($active_tab == 'brands'): ?>
                 
-                <div class="wcs-info-box" style="border-left-color: #ffc107;">
-                    <h3>💡 Швидкі Підказки:</h3>
-                    <ul style="margin-bottom: 0;">
-                        <li><strong>Базові налаштування:</strong> 500/3%, 1000/5%, 1500/7% - перевірені показники</li>
-                        <li><strong>Максимальний ліміт:</strong> Розрахуйте виходячи з вашого середнього чека та кількості клієнтів</li>
-                    </ul>
+                <!-- BRANDS TAB CONTENT -->
+                <div class="wcs-brands-settings">
+                    <table class="form-table">
+                        <tr>
+                            <th colspan="2">
+                                <h2>🏷️ Налаштування Правил Кешбеку</h2>
+                                <p class="description">Створюйте правила для різних брендів або конкретних товарів (винятків).</p>
+                            </th>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="use_brands_logic">🚀 Активувати логіку правил</label></th>
+                            <td><input type="checkbox" name="wcs_cashback_settings[use_brands_logic]" id="use_brands_logic" value="yes" <?php checked($settings['use_brands_logic'], 'yes'); ?>></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="brand_taxonomy">📂 Таксономія брендів</label></th>
+                            <td>
+                                <select name="wcs_cashback_settings[brand_taxonomy]" id="brand_taxonomy">
+                                    <?php
+                                    $taxonomies = get_taxonomies(array('object_type' => array('product')), 'objects');
+                                    foreach ($taxonomies as $taxonomy) {
+                                        echo '<option value="' . esc_attr($taxonomy->name) . '" ' . selected($settings['brand_taxonomy'], $taxonomy->name, false) . '>' . esc_html($taxonomy->label) . '</option>';
+                                    }
+                                    ?>
+                                </select>
+                            </td>
+                        </tr>
+                    </table>
+
+                    <div id="wcs-brand-rules-container">
+                        <div class="wcs-rules-header">
+                            <div class="col-type" style="width:150px; font-weight:bold;">Тип</div>
+                            <div class="col-select" style="flex:1; font-weight:bold;">Бренди / Товари</div>
+                            <div class="col-pct" style="width:100px; font-weight:bold;">Кешбек %</div>
+                            <div class="col-action" style="width:40px;"></div>
+                        </div>
+                        
+                        <div class="wcs-rules-list">
+                            <?php 
+                            $rules = !empty($settings['brand_rules']) ? $settings['brand_rules'] : array();
+                            foreach ($rules as $index => $rule): 
+                                $rule_type = $rule['type'] ?? 'brand';
+                                $rule_ids  = (array)($rule['ids'] ?? array());
+                                $rule_pct  = $rule['percentage'] ?? 0;
+                            ?>
+                            <div class="wcs-rule-row" data-index="<?php echo $index; ?>" style="display:flex; gap:10px; margin-bottom:10px; border-bottom:1px solid #eee; padding-bottom:10px;">
+                                <div class="col-type" style="width:150px;">
+                                    <select name="wcs_cashback_settings[brand_rules][<?php echo $index; ?>][type]" class="rule-type-select">
+                                        <option value="brand" <?php selected($rule_type, 'brand'); ?>>Бренд</option>
+                                        <option value="product" <?php selected($rule_type, 'product'); ?>>Товар (Виняток)</option>
+                                    </select>
+                                </div>
+                                <div class="col-select" style="flex:1;">
+                                    <select name="wcs_cashback_settings[brand_rules][<?php echo $index; ?>][ids][]" class="rule-ids-select wcs-select2-ajax" multiple style="width: 100%;">
+                                        <?php 
+                                        if ($rule_type === 'brand') {
+                                            foreach ($rule_ids as $tid) {
+                                                $term = get_term($tid, $settings['brand_taxonomy']);
+                                                if ($term) echo '<option value="'.$tid.'" selected>'.$term->name.'</option>';
+                                            }
+                                        } else {
+                                            foreach ($rule_ids as $pid) {
+                                                $p = wc_get_product($pid);
+                                                if ($p) echo '<option value="'.$pid.'" selected>'.$p->get_name().'</option>';
+                                            }
+                                        }
+                                        ?>
+                                    </select>
+                                </div>
+                                <div class="col-pct" style="width:100px;">
+                                    <input type="number" step="0.01" name="wcs_cashback_settings[brand_rules][<?php echo $index; ?>][percentage]" value="<?php echo esc_attr($rule_pct); ?>" style="width: 70px;"> %
+                                </div>
+                                <div class="col-action" style="width:40px;">
+                                    <button type="button" class="button wcs-remove-rule">❌</button>
+                                </div>
+                            </div>
+                            <?php endforeach; ?>
+                        </div>
+                        <button type="button" id="wcs-add-rule" class="button button-primary">➕ Додати правило</button>
+                    </div>
+
+                    <table class="form-table">
+                        <tr style="background: #f0f9ff;">
+                            <th scope="row"><label for="default_percentage">📦 Відсоток для решти (%)</label></th>
+                            <td><input type="number" step="0.01" name="wcs_cashback_settings[default_percentage]" id="default_percentage" value="<?php echo esc_attr($settings['default_percentage']); ?>" style="width: 100px;"></td>
+                        </tr>
+                    </table>
                 </div>
+
+                <style>#wcs-brand-rules-container { background:#fff; border:1px solid #ccd0d4; padding:20px; border-radius:4px; margin:20px 0; }</style>
 
                 <?php elseif ($active_tab == 'display'): ?>
                 
-                <!-- DISPLAY TAB CONTENT (New) -->
+                <!-- DISPLAY TAB CONTENT -->
                 <table class="form-table">
+                    <tr><th colspan="2"><h2>🎨 Налаштування Вигляду</h2></th></tr>
                     <tr>
-                        <th colspan="2">
-                            <h2>🎨 Налаштування Вигляду</h2>
-                            <p class="description">Виберіть, де саме відображати блоки використання кешбеку.</p>
-                        </th>
-                    </tr>
-                    
-                    <tr>
-                        <th scope="row">
-                            <label for="cart_position">🛒 Позиція в Кошику</label>
-                        </th>
+                        <th scope="row"><label for="cart_position">🛒 Позиція в Кошику</label></th>
                         <td>
-                            <select name="wcs_cashback_settings[cart_position]" id="cart_position" style="min-width: 300px;">
-                                <option value="woocommerce_cart_totals_before_order_total" <?php selected($settings['cart_position'], 'woocommerce_cart_totals_before_order_total'); ?>>В таблиці підсумків (Стандартно)</option>
-                                <option value="woocommerce_before_cart_totals" <?php selected($settings['cart_position'], 'woocommerce_before_cart_totals'); ?>>Перед таблицею підсумків (Зліва/Зверху)</option>
-                                <option value="woocommerce_after_cart_totals" <?php selected($settings['cart_position'], 'woocommerce_after_cart_totals'); ?>>Після таблиці підсумків</option>
-                                <option value="woocommerce_before_cart" <?php selected($settings['cart_position'], 'woocommerce_before_cart'); ?>>Над кошиком (Верх сторінки)</option>
-                                <option value="none" <?php selected($settings['cart_position'], 'none'); ?>>❌ Не відображати в кошику</option>
+                            <select name="wcs_cashback_settings[cart_position]" id="cart_position">
+                                <option value="woocommerce_cart_totals_before_order_total" <?php selected($settings['cart_position'], 'woocommerce_cart_totals_before_order_total'); ?>>В таблиці підсумків</option>
+                                <option value="none" <?php selected($settings['cart_position'], 'none'); ?>>❌ Не відображати</option>
                             </select>
-                            <p class="description">
-                                Виберіть місце, де з'явиться блок "Ваш кешбек / Застосувати".<br>
-                                💡 Найкращий варіант - "В таблиці підсумків", це виглядає найбільш органічно.
-                            </p>
                         </td>
                     </tr>
-                    
                     <tr>
-                        <th scope="row">
-                            <label for="checkout_position">💳 Позиція при Оформленні (Checkout)</label>
-                        </th>
+                        <th scope="row"><label for="checkout_position">💳 Позиція при Checkout</label></th>
                         <td>
-                            <select name="wcs_cashback_settings[checkout_position]" id="checkout_position" style="min-width: 300px;">
-                                <option value="woocommerce_review_order_before_payment" <?php selected($settings['checkout_position'], 'woocommerce_review_order_before_payment'); ?>>Перед кнопкою оплати (Стандартно)</option>
-                                <option value="woocommerce_review_order_before_order_total" <?php selected($settings['checkout_position'], 'woocommerce_review_order_before_order_total'); ?>>Перед підсумком замовлення</option>
-                                <option value="woocommerce_review_order_after_order_total" <?php selected($settings['checkout_position'], 'woocommerce_review_order_after_order_total'); ?>>Після підсумку замовлення</option>
-                                <option value="woocommerce_before_checkout_form" <?php selected($settings['checkout_position'], 'woocommerce_before_checkout_form'); ?>>Над формою (Верх сторінки)</option>
-                                <option value="none" <?php selected($settings['checkout_position'], 'none'); ?>>❌ Не відображати при оформленні</option>
+                            <select name="wcs_cashback_settings[checkout_position]" id="checkout_position">
+                                <option value="woocommerce_review_order_before_payment" <?php selected($settings['checkout_position'], 'woocommerce_review_order_before_payment'); ?>>Перед кнопкою оплати</option>
+                                <option value="none" <?php selected($settings['checkout_position'], 'none'); ?>>❌ Не відображати</option>
                             </select>
-                            <p class="description">
-                                Де виводити блок використання кешбеку на сторінці оплати.
-                            </p>
                         </td>
                     </tr>
                 </table>
-                
-                <div class="wcs-info-box" style="border-left-color: #2271b1;">
-                    <h3>ℹ️ Інфо про відображення:</h3>
-                    <p style="margin-bottom: 0;">
-                        Якщо ви змінюєте позицію, але не бачите змін - спробуйте очистити кеш вашого браузера або плагіна кешування.<br>
-                        Деякі позиції можуть виглядати по-різному в залежності від вашої теми WooCommerce.
-                    </p>
-                </div>
                 
                 <?php endif; ?>
                 

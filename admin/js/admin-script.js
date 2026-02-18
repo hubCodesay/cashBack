@@ -141,4 +141,94 @@ jQuery(document).ready(function($) {
             $('#tier_3_threshold').val(tier2);
         }
     });
+
+    /**
+     * Brands logic: Multi-Rule Repeater & AJAX Select2
+     */
+    var rulesContainer = $('.wcs-rules-list');
+    var addRuleBtn = $('#wcs-add-rule');
+    var brandTaxonomy = $('#brand_taxonomy');
+
+    function initSelect2(row) {
+        var select = row.find('.wcs-select2-ajax');
+        var typeSelect = row.find('.rule-type-select');
+        
+        select.select2({
+            ajax: {
+                url: wcs_admin.ajax_url,
+                dataType: 'json',
+                delay: 250,
+                data: function (params) {
+                    var type = typeSelect.val();
+                    return {
+                        action: type === 'brand' ? 'wcs_search_brands' : 'wcs_search_products',
+                        nonce: wcs_admin.nonce,
+                        term: params.term,
+                        taxonomy: brandTaxonomy.val()
+                    };
+                },
+                processResults: function (data) {
+                    return { results: data };
+                },
+                cache: true
+            },
+            placeholder: 'Почніть вводити назву...',
+            minimumInputLength: 2,
+            width: '100%'
+        });
+    }
+
+    // Initialize existing rows
+    $('.wcs-rule-row').each(function() {
+        initSelect2($(this));
+    });
+
+    // Add new rule row
+    addRuleBtn.on('click', function() {
+        var index = rulesContainer.children().length;
+        var html = `
+            <div class="wcs-rule-row" data-index="${index}">
+                <div class="col-type">
+                    <select name="wcs_cashback_settings[brand_rules][${index}][type]" class="rule-type-select">
+                        <option value="brand">Бренд</option>
+                        <option value="product">Товар (Виняток)</option>
+                    </select>
+                </div>
+                <div class="col-select">
+                    <select name="wcs_cashback_settings[brand_rules][${index}][ids][]" class="rule-ids-select wcs-select2-ajax" multiple style="width: 100%;"></select>
+                </div>
+                <div class="col-pct">
+                    <input type="number" step="0.01" name="wcs_cashback_settings[brand_rules][${index}][percentage]" value="0" style="width: 70px;"> %
+                </div>
+                <div class="col-action">
+                    <button type="button" class="button wcs-remove-rule" title="Видалити">❌</button>
+                </div>
+            </div>
+        `;
+        var newRow = $(html);
+        rulesContainer.append(newRow);
+        initSelect2(newRow);
+    });
+
+    // Remove rule row
+    rulesContainer.on('click', '.wcs-remove-rule', function() {
+        $(this).closest('.wcs-rule-row').remove();
+        // Option-ally: re-index names, but PHP handles non-sequential indices fine.
+    });
+
+    // Clear selection when type changes
+    rulesContainer.on('change', '.rule-type-select', function() {
+        var row = $(this).closest('.wcs-rule-row');
+        row.find('.wcs-select2-ajax').val(null).trigger('change');
+    });
+
+    // Refresh page when brand taxonomy changes
+    brandTaxonomy.on('change', function() {
+        if (confirm('Таксономія змінилася. Для коректної роботи потрібно перезавантажити сторінку. Продовжити?')) {
+            var url = new URL(window.location.href);
+            url.searchParams.set('tab', 'brands');
+            url.searchParams.set('wcs_taxonomy', $(this).val());
+            window.location.href = url.href;
+        }
+    });
 });

@@ -148,13 +148,15 @@ class WCS_Cashback_Checkout {
 		}
 
 		$subtotal = floatval(WC()->cart->get_subtotal());
-		$percentage = WCS_Cashback_Calculator::get_percentage($subtotal);
 		$potential = WCS_Cashback_Calculator::calculate($subtotal);
+		
+		// Calculate effective percentage for display
+		$effective_pct = ($subtotal > 0) ? round(($potential / $subtotal) * 100, 1) : 0;
 
 		echo '<tr class="wcs-potential-earning-row">';
 		echo '<th>' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</th>';
 		if ($potential > 0) {
-			echo '<td><span class="wcs-earn-amount">+' . wc_price($potential) . '</span> <small style="color:#999;">(' . $percentage . '%)</small></td>';
+			echo '<td><span class="wcs-earn-amount">+' . wc_price($potential) . '</span> <small style="color:#999;">(' . $effective_pct . '%)</small></td>';
 		} else {
 			// Show next tier info so customer knows how much more to spend
 			$next_tier = $this->get_next_tier_info($subtotal);
@@ -328,9 +330,9 @@ class WCS_Cashback_Checkout {
 		}
 
 		$subtotal   = floatval(WC()->cart->get_subtotal());
-		$percentage = WCS_Cashback_Calculator::get_percentage($subtotal);
 		$potential   = WCS_Cashback_Calculator::calculate($subtotal);
-
+		$percentage  = ($subtotal > 0) ? round(($potential / $subtotal) * 100, 1) : 0;
+		$applied     = $this->get_applied_amount();
 		echo '<div class="wcs-potential-cashback">';
 		echo '<strong>' . __('Потенційний кешбек:', 'woo-cashback-system') . '</strong> ';
 		if ($potential > 0) {
@@ -372,8 +374,8 @@ class WCS_Cashback_Checkout {
 
 		$applied   = $this->get_applied_amount();
 		$subtotal  = floatval(WC()->cart->get_subtotal());
-		$percentage = ($applied > 0) ? 0 : WCS_Cashback_Calculator::get_percentage($subtotal);
 		$potential  = ($applied > 0) ? 0 : WCS_Cashback_Calculator::calculate($subtotal);
+		$percentage = ($subtotal > 0 && $potential > 0) ? round(($potential / $subtotal) * 100, 1) : 0;
 
 		$earning_html = '';
 		if ($applied > 0) {
@@ -441,8 +443,8 @@ class WCS_Cashback_Checkout {
 		$percentage = 0;
 		$potential  = 0;
 		if (class_exists('WCS_Cashback_Calculator') && $applied <= 0) {
-			$percentage = WCS_Cashback_Calculator::get_percentage($cart_subtotal);
 			$potential  = WCS_Cashback_Calculator::calculate($cart_subtotal);
+			$percentage = ($cart_subtotal > 0) ? round(($potential / $cart_subtotal) * 100, 1) : 0;
 		}
 
 		// Generate block HTML
@@ -718,8 +720,8 @@ class WCS_Cashback_Checkout {
 		if ($skip_earning !== 'yes' && class_exists('WCS_Cashback_Calculator')) {
 			// Use subtotal (before discounts) as basis for cashback calculation
 			$subtotal = floatval($order->get_subtotal());
-			$percentage = WCS_Cashback_Calculator::get_percentage($subtotal);
-			$earned     = WCS_Cashback_Calculator::calculate($subtotal);
+			$earned     = WCS_Cashback_Calculator::calculate($subtotal, $order);
+			$percentage = ($subtotal > 0) ? round(($earned / $subtotal) * 100, 1) : 0;
 
 			if ($earned > 0) {
 				// Check max limit

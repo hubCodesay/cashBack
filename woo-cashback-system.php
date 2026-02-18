@@ -151,8 +151,8 @@ function wcs_admin_scripts($hook) {
     wp_enqueue_style('wcs-admin-style', WCS_PLUGIN_URL . 'admin/css/admin-style.css', array(), WCS_VERSION);
     wp_enqueue_script('wcs-admin-script', WCS_PLUGIN_URL . 'admin/js/admin-script.js', array('jquery'), WCS_VERSION, true);
     
-    // Enqueue Select2 for VIP discounts page (bundled with WooCommerce)
-    if (strpos($hook, 'wcs-cashback-vip') !== false) {
+    // Enqueue Select2 for VIP discounts and Brands selection (bundled with WooCommerce)
+    if (strpos($hook, 'wcs-cashback') !== false) {
         wp_enqueue_style('select2', WC()->plugin_url() . '/assets/css/select2.css');
         wp_enqueue_script('select2', WC()->plugin_url() . '/assets/js/select2/select2.full.min.js', array('jquery'), null, true);
     }
