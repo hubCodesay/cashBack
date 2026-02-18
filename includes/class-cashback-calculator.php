@@ -97,11 +97,9 @@ class WCS_Cashback_Calculator {
         if (!empty($items)) {
             $brand_taxonomy = isset($settings['brand_taxonomy']) ? $settings['brand_taxonomy'] : 'product_brand';
             $rules = isset($settings['brand_rules']) ? (array)$settings['brand_rules'] : array();
-            $default_pct = isset($settings['default_percentage']) ? floatval($settings['default_percentage']) : 5;
             
-            // Global tier percentage as fallback for 'default' items
-            $tier_pct = self::get_percentage($subtotal);
-            $other_pct = ($tier_pct > 0) ? $tier_pct : $default_pct;
+            // Strictly use the global tier percentage for all 'default' items
+            $other_pct = self::get_percentage($subtotal);
 
             foreach ($items as $item) {
                 $product_id = $item['id'];
@@ -139,9 +137,7 @@ class WCS_Cashback_Calculator {
             }
         } else {
             // Fallback if no items found
-            $tier_pct = self::get_percentage($subtotal);
-            $default_pct = isset($settings['default_percentage']) ? floatval($settings['default_percentage']) : 5;
-            $pct = ($tier_pct > 0) ? $tier_pct : $default_pct;
+            $pct = self::get_percentage($subtotal);
             $total_cashback = $subtotal * ($pct / 100);
         }
 

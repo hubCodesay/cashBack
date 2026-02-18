@@ -364,12 +364,7 @@ class WCS_Cashback_Admin {
                         <button type="button" id="wcs-add-rule" class="button button-primary">➕ Додати правило</button>
                     </div>
 
-                    <table class="form-table">
-                        <tr style="background: #f0f9ff;">
-                            <th scope="row"><label for="default_percentage">📦 Відсоток для решти (%)</label></th>
-                            <td><input type="number" step="0.01" name="wcs_cashback_settings[default_percentage]" id="default_percentage" value="<?php echo esc_attr($settings['default_percentage']); ?>" style="width: 100px;"></td>
-                        </tr>
-                    </table>
+                    </div>
                 </div>
 
                 <style>#wcs-brand-rules-container { background:#fff; border:1px solid #ccd0d4; padding:20px; border-radius:4px; margin:20px 0; }</style>
