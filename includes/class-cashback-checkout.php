@@ -137,31 +137,24 @@ class WCS_Cashback_Checkout {
 			return;
 		}
 
-		$applied = $this->get_applied_amount();
-		// If cashback is being used — no earning on this purchase
-		if ($applied > 0) {
-			echo '<tr class="wcs-potential-earning-row">';
-			echo '<th>' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</th>';
-			echo '<td><span class="wcs-no-earning">—</span> <small style="color:#999;">' . __('(не нараховується при використанні кешбеку)', 'woo-cashback-system') . '</small></td>';
-			echo '</tr>';
-			return;
-		}
-
 		$subtotal = floatval(WC()->cart->get_subtotal());
-		$potential = WCS_Cashback_Calculator::calculate($subtotal);
+		$applied  = $this->get_applied_amount();
+		$calculation_base = max(0, $subtotal - $applied);
+		$potential = WCS_Cashback_Calculator::calculate($calculation_base, null, $applied);
 		
 		// Calculate effective percentage for display
-		$effective_pct = ($subtotal > 0) ? round(($potential / $subtotal) * 100, 1) : 0;
+		$effective_pct = ($calculation_base > 0) ? round(($potential / $calculation_base) * 100, 1) : 0;
 
 		echo '<tr class="wcs-potential-earning-row">';
 		echo '<th>' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</th>';
+
 		if ($potential > 0) {
 			echo '<td><span class="wcs-earn-amount">+' . wc_price($potential) . '</span> <small style="color:#999;">(' . $effective_pct . '%)</small></td>';
 		} else {
 			// Show next tier info so customer knows how much more to spend
-			$next_tier = $this->get_next_tier_info($subtotal);
+			$next_tier = $this->get_next_tier_info($calculation_base);
 			if ($next_tier) {
-				$diff = $next_tier['threshold'] - $subtotal;
+				$diff = $next_tier['threshold'] - $calculation_base;
 				echo '<td><span class="wcs-earn-hint">'
 					. sprintf(
 						__('Додайте ще %s і отримайте %s%% кешбеку', 'woo-cashback-system'),
@@ -380,18 +373,13 @@ class WCS_Cashback_Checkout {
 	private function render_earning_data_json($context = 'cart') {
 		if (!class_exists('WCS_Cashback_Calculator') || !WC()->cart) return;
 
-		$applied   = $this->get_applied_amount();
 		$subtotal  = floatval(WC()->cart->get_subtotal());
-		$potential  = ($applied > 0) ? 0 : WCS_Cashback_Calculator::calculate($subtotal);
-		$percentage = ($subtotal > 0 && $potential > 0) ? round(($potential / $subtotal) * 100, 1) : 0;
+		$calculation_base = max(0, $subtotal - $applied);
+		$potential  = WCS_Cashback_Calculator::calculate($calculation_base, null, $applied);
+		$percentage = ($calculation_base > 0 && $potential > 0) ? round(($potential / $calculation_base) * 100, 1) : 0;
 
 		$earning_html = '';
-		if ($applied > 0) {
-			$earning_html = '<div class="wcs-potential-earning-block">'
-				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
-				. '<span class="wcs-no-earning">— <small>' . __('(не нараховується при використанні кешбеку)', 'woo-cashback-system') . '</small></span>'
-				. '</div>';
-		} elseif ($potential > 0) {
+		if ($potential > 0) {
 			$earning_html = '<div class="wcs-potential-earning-block">'
 				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
 				. '<span class="wcs-earn-amount">+' . wc_price($potential) . '</span> <small>(' . $percentage . '%)</small>'
@@ -448,11 +436,12 @@ class WCS_Cashback_Checkout {
 		$max_allowed   = min($balance, round($cart_subtotal * ($usage_pct / 100), 2));
 		$applied       = $this->get_applied_amount();
 
-		$percentage = 0;
 		$potential  = 0;
-		if (class_exists('WCS_Cashback_Calculator') && $applied <= 0) {
-			$potential  = WCS_Cashback_Calculator::calculate($cart_subtotal);
-			$percentage = ($cart_subtotal > 0) ? round(($potential / $cart_subtotal) * 100, 1) : 0;
+		$percentage = 0;
+		if (class_exists('WCS_Cashback_Calculator')) {
+			$calculation_base = max(0, $cart_subtotal - $applied);
+			$potential  = WCS_Cashback_Calculator::calculate($calculation_base, null, $applied);
+			$percentage = ($calculation_base > 0) ? round(($potential / $calculation_base) * 100, 1) : 0;
 		}
 
 		// Generate block HTML
@@ -464,12 +453,7 @@ class WCS_Cashback_Checkout {
 
 		// Generate earning HTML
 		$earning_html = '';
-		if ($applied > 0) {
-			$earning_html = '<div class="wcs-potential-earning-block">'
-				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
-				. '<span class="wcs-no-earning">— <small>' . __('(не нараховується при використанні кешбеку)', 'woo-cashback-system') . '</small></span>'
-				. '</div>';
-		} elseif ($potential > 0) {
+		if ($potential > 0) {
 			$earning_html = '<div class="wcs-potential-earning-block">'
 				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
 				. '<span class="wcs-earn-amount">+' . wc_price($potential) . '</span> <small>(' . $percentage . '%)</small>'
