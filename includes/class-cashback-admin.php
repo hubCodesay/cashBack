@@ -820,6 +820,60 @@ class WCS_Cashback_Admin {
     }
 
     /* ═══════════════════════════════════════════════════════
+     *  AJAX — Search Brands
+     * ═══════════════════════════════════════════════════════ */
+    public function ajax_search_brands() {
+        check_ajax_referer('wcs_admin_nonce', 'nonce');
+        if (!current_user_can('manage_woocommerce')) wp_send_json_error();
+
+        $term = isset($_GET['term']) ? sanitize_text_field($_GET['term']) : '';
+        $taxonomy = isset($_GET['taxonomy']) ? sanitize_text_field($_GET['taxonomy']) : 'product_brand';
+
+        $args = array(
+            'taxonomy'   => $taxonomy,
+            'hide_empty' => false,
+            'search'     => $term,
+            'number'     => 50
+        );
+
+        $terms = get_terms($args);
+        $results = array();
+
+        if (!is_wp_error($terms) && !empty($terms)) {
+            foreach ($terms as $t) {
+                $results[] = array('id' => $t->term_id, 'text' => $t->name);
+            }
+        }
+
+        wp_send_json($results);
+    }
+
+    /* ═══════════════════════════════════════════════════════
+     *  AJAX — Search Products
+     * ═══════════════════════════════════════════════════════ */
+    public function ajax_search_products() {
+        check_ajax_referer('wcs_admin_nonce', 'nonce');
+        if (!current_user_can('manage_woocommerce')) wp_send_json_error();
+
+        $term = isset($_GET['term']) ? sanitize_text_field($_GET['term']) : '';
+
+        $args = array(
+            'status' => 'publish',
+            'limit'  => 30,
+            's'      => $term
+        );
+
+        $products = wc_get_products($args);
+        $results = array();
+
+        foreach ($products as $p) {
+            $results[] = array('id' => $p->get_id(), 'text' => $p->get_name() . ' (ID: ' . $p->get_id() . ')');
+        }
+
+        wp_send_json($results);
+    }
+
+    /* ═══════════════════════════════════════════════════════
      *  VIP Discounts Admin Page
      * ═══════════════════════════════════════════════════════ */
     public function vip_discounts_page() {
