@@ -136,25 +136,43 @@ class WCS_Cashback_Admin {
         if (isset($input['enable_notifications'])) $sanitized['enable_notifications'] = 'yes';
         elseif (isset($_POST['_wp_http_referer']) && strpos($_POST['_wp_http_referer'], 'tab=general') !== false) $sanitized['enable_notifications'] = 'no';
         
+        if (isset($input['exclude_sale_items'])) $sanitized['exclude_sale_items'] = 'yes';
+        elseif (isset($_POST['_wp_http_referer']) && strpos($_POST['_wp_http_referer'], 'tab=general') !== false) $sanitized['exclude_sale_items'] = 'no';
+        
+        $is_brands_tab = isset($_POST['_wp_http_referer']) && strpos($_POST['_wp_http_referer'], 'tab=brands') !== false;
+
         // Brand Rules (Repeater)
         if (isset($input['brand_rules']) && is_array($input['brand_rules'])) {
             $sanitized_rules = array();
             foreach ($input['brand_rules'] as $rule) {
                 $sanitized_rules[] = array(
-                    'type'       => in_array($rule['type'], array('brand', 'product')) ? $rule['type'] : 'brand',
+                    'type'       => in_array($rule['type'], array('brand', 'product'), true) ? $rule['type'] : 'brand',
                     'ids'        => isset($rule['ids']) ? array_map('intval', (array) $rule['ids']) : array(),
                     'percentage' => floatval($rule['percentage'])
                 );
             }
             $sanitized['brand_rules'] = $sanitized_rules;
-        } else {
+        } elseif ($is_brands_tab) {
             $sanitized['brand_rules'] = array();
         }
 
         if (isset($input['brand_taxonomy'])) $sanitized['brand_taxonomy'] = sanitize_text_field($input['brand_taxonomy']);
         if (isset($input['default_percentage'])) $sanitized['default_percentage'] = floatval($input['default_percentage']);
         if (isset($input['use_brands_logic'])) $sanitized['use_brands_logic'] = 'yes';
-        else $sanitized['use_brands_logic'] = 'no';
+        elseif ($is_brands_tab) $sanitized['use_brands_logic'] = 'no';
+        
+        if (isset($input['cart_position'])) {
+            $allowed_cart_positions = array('woocommerce_cart_totals_before_order_total', 'none');
+            $sanitized['cart_position'] = in_array($input['cart_position'], $allowed_cart_positions, true)
+                ? $input['cart_position']
+                : 'woocommerce_cart_totals_before_order_total';
+        }
+        if (isset($input['checkout_position'])) {
+            $allowed_checkout_positions = array('woocommerce_review_order_before_payment', 'none');
+            $sanitized['checkout_position'] = in_array($input['checkout_position'], $allowed_checkout_positions, true)
+                ? $input['checkout_position']
+                : 'woocommerce_review_order_before_payment';
+        }
         
         return $sanitized;
     }
@@ -184,6 +202,7 @@ class WCS_Cashback_Admin {
                 'max_cashback_limit' => 10000,
                 'usage_limit_percentage' => 50,
                 'enable_notifications' => 'yes',
+                'exclude_sale_items' => 'yes',
                 // New display settings
                 'cart_position' => 'woocommerce_cart_totals_before_order_total',
                 'checkout_position' => 'woocommerce_review_order_before_payment',
@@ -202,6 +221,7 @@ class WCS_Cashback_Admin {
         $settings['brand_taxonomy'] = isset($settings['brand_taxonomy']) ? $settings['brand_taxonomy'] : 'product_brand';
         $settings['brand_rules'] = isset($settings['brand_rules']) ? (array)$settings['brand_rules'] : array();
         $settings['default_percentage'] = isset($settings['default_percentage']) ? floatval($settings['default_percentage']) : 5;
+        $settings['exclude_sale_items'] = isset($settings['exclude_sale_items']) ? $settings['exclude_sale_items'] : 'yes';
         
         ?>
         <div class="wrap">
@@ -279,6 +299,15 @@ class WCS_Cashback_Admin {
                     <tr>
                         <th scope="row"><label for="usage_limit_percentage">🎯 Ліміт Використання (%)</label></th>
                         <td><input type="number" step="0.01" name="wcs_cashback_settings[usage_limit_percentage]" id="usage_limit_percentage" value="<?php echo esc_attr($settings['usage_limit_percentage']); ?>" style="width: 150px;"></td>
+                    </tr>
+                    <tr>
+                        <th scope="row">
+                            <label for="exclude_sale_items">🏷️ Знижкові товари</label>
+                        </th>
+                        <td>
+                            <input type="checkbox" name="wcs_cashback_settings[exclude_sale_items]" id="exclude_sale_items" value="yes" <?php checked($settings['exclude_sale_items'], 'yes'); ?>>
+                            <p class="description">Якщо увімкнено, кешбек не нараховується на товари зі знижкою (sale).</p>
+                        </td>
                     </tr>
                 </table>
 
@@ -1361,4 +1390,3 @@ class WCS_Cashback_Admin {
         <?php
     }
 }
-

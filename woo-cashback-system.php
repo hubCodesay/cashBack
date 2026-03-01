@@ -79,6 +79,7 @@ function wcs_activate_plugin() {
         'max_cashback_limit' => 10000,
         'usage_limit_percentage' => 50,
         'enable_notifications' => 'yes',
+        'exclude_sale_items' => 'yes',
     );
     
     if (!get_option('wcs_cashback_settings')) {
