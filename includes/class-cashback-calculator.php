@@ -182,11 +182,18 @@ class WCS_Cashback_Calculator {
         }
 
         $eligible_items = array();
+        $has_sale_items = false;
         foreach ($items as $item) {
-            if ($exclude_sale_items && !empty($item['is_sale'])) {
-                continue;
+            if (!empty($item['is_sale'])) {
+                $has_sale_items = true;
             }
             $eligible_items[] = $item;
+        }
+
+        // Strict rule: if sale-item exclusion is enabled and order/cart contains at least
+        // one discounted product, cashback must not be accrued at all.
+        if ($exclude_sale_items && $has_sale_items) {
+            return 0;
         }
 
         if (empty($eligible_items)) {
