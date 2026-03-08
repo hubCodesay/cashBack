@@ -11,6 +11,13 @@ if (!defined('ABSPATH')) {
 
 class WCS_Cashback_Calculator {
     /**
+     * Cached list of WooCommerce product IDs linked to LMS courses.
+     *
+     * @var array|null
+     */
+    private static $course_product_ids = null;
+
+    /**
      * Get merged cashback settings from the main option with legacy fallback.
      *
      * @return array
@@ -35,6 +42,7 @@ class WCS_Cashback_Calculator {
             'brand_taxonomy'        => isset($settings['brand_taxonomy']) ? $settings['brand_taxonomy'] : 'product_brand',
             'brand_rules'           => isset($settings['brand_rules']) ? (array) $settings['brand_rules'] : array(),
             'exclude_sale_items'    => isset($settings['exclude_sale_items']) ? $settings['exclude_sale_items'] : 'yes',
+            'allow_course_cashback' => isset($settings['allow_course_cashback']) ? $settings['allow_course_cashback'] : 'no',
         );
     }
 
@@ -62,6 +70,58 @@ class WCS_Cashback_Calculator {
         $line_discounted = ($line_subtotal !== null && $line_total !== null && floatval($line_subtotal) > floatval($line_total));
 
         return $line_discounted || ($regular_price > 0 && $sale_price > 0 && $sale_price < $regular_price);
+    }
+
+    /**
+     * Return product IDs that are attached to courses in SmartLearn LMS.
+     *
+     * @return array
+     */
+    public static function get_course_product_ids() {
+        if (self::$course_product_ids !== null) {
+            return self::$course_product_ids;
+        }
+
+        $ids = array();
+
+        if (post_type_exists('smartlearn_course')) {
+            $course_posts = get_posts(array(
+                'post_type'      => 'smartlearn_course',
+                'post_status'    => array('publish', 'draft', 'pending', 'future', 'private'),
+                'numberposts'    => -1,
+                'fields'         => 'ids',
+                'meta_key'       => '_smartlearn_course_product_id',
+                'meta_compare'   => 'EXISTS',
+                'suppress_filters' => false,
+            ));
+
+            foreach ((array) $course_posts as $course_id) {
+                $product_id = absint(get_post_meta($course_id, '_smartlearn_course_product_id', true));
+                if ($product_id > 0) {
+                    $ids[] = $product_id;
+                }
+            }
+        }
+
+        $ids = array_values(array_unique(array_filter(array_map('absint', $ids))));
+        self::$course_product_ids = apply_filters('wcs_course_product_ids', $ids);
+
+        return self::$course_product_ids;
+    }
+
+    /**
+     * Check whether a WooCommerce product is used as a course product.
+     *
+     * @param int $product_id Product ID.
+     * @return bool
+     */
+    public static function is_course_product($product_id) {
+        $product_id = absint($product_id);
+        if ($product_id <= 0) {
+            return false;
+        }
+
+        return in_array($product_id, self::get_course_product_ids(), true);
     }
 
     /**
@@ -135,6 +195,7 @@ class WCS_Cashback_Calculator {
 
         $use_brands = isset($settings['use_brands_logic']) && $settings['use_brands_logic'] === 'yes';
         $exclude_sale_items = isset($settings['exclude_sale_items']) && $settings['exclude_sale_items'] === 'yes';
+        $allow_course_cashback = isset($settings['allow_course_cashback']) && $settings['allow_course_cashback'] === 'yes';
         $subtotal = floatval($subtotal);
         $cashback_used = floatval($cashback_used);
 
@@ -192,9 +253,13 @@ class WCS_Cashback_Calculator {
 
         $eligible_items = array();
         $has_sale_items = false;
+        $has_course_items = false;
         foreach ($items as $item) {
             if (!empty($item['is_sale'])) {
                 $has_sale_items = true;
+            }
+            if (self::is_course_product($item['id'])) {
+                $has_course_items = true;
             }
             $eligible_items[] = $item;
         }
@@ -202,6 +267,12 @@ class WCS_Cashback_Calculator {
         // Strict rule: if sale-item exclusion is enabled and order/cart contains at least
         // one discounted product, cashback must not be accrued at all.
         if ($exclude_sale_items && $has_sale_items) {
+            return 0;
+        }
+
+        // Course products never accrue cashback. If such a product is in the cart/order,
+        // cashback for the purchase is blocked entirely.
+        if (!$allow_course_cashback && $has_course_items) {
             return 0;
         }
 

@@ -80,6 +80,7 @@ function wcs_activate_plugin() {
         'usage_limit_percentage' => 50,
         'enable_notifications' => 'yes',
         'exclude_sale_items' => 'yes',
+        'allow_course_cashback' => 'no',
     );
     
     if (!get_option('wcs_cashback_settings')) {

@@ -158,6 +158,8 @@ class WCS_Cashback_Checkout {
 			echo '<td><span class="wcs-earn-amount">+' . wc_price($potential) . '</span> <small style="color:#999;">(' . $effective_pct . '%)</small></td>';
 		} elseif ($applied > 0) {
 			echo '<td><span class="wcs-no-earning">' . __('Не нараховується', 'woo-cashback-system') . '</span></td>';
+		} elseif ($this->cart_has_course_products()) {
+			echo '<td><span class="wcs-no-earning">' . __('У кошику є курс, на курси кешбек не нараховується.', 'woo-cashback-system') . '</span></td>';
 		} elseif ($this->cart_has_discounted_products()) {
 			echo '<td><span class="wcs-no-earning">' . __('Товар у вас зі знижкою, він не проходить для кешбеку.', 'woo-cashback-system') . '</span></td>';
 		} else {
@@ -230,6 +232,24 @@ class WCS_Cashback_Checkout {
 			$line_discounted = isset($cart_item['line_subtotal'], $cart_item['line_total']) && floatval($cart_item['line_subtotal']) > floatval($cart_item['line_total']);
 
 			if ($is_sale || $line_discounted) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check if cart contains at least one product linked to a course.
+	 */
+	private function cart_has_course_products() {
+		if (!WC()->cart || !class_exists('WCS_Cashback_Calculator')) {
+			return false;
+		}
+
+		foreach (WC()->cart->get_cart() as $cart_item) {
+			$product_id = isset($cart_item['product_id']) ? absint($cart_item['product_id']) : 0;
+			if ($product_id > 0 && WCS_Cashback_Calculator::is_course_product($product_id)) {
 				return true;
 			}
 		}
@@ -389,6 +409,8 @@ class WCS_Cashback_Checkout {
 		echo '<strong>' . __('Потенційний кешбек:', 'woo-cashback-system') . '</strong> ';
 		if ($potential > 0) {
 			echo wc_price($potential) . ' (' . $percentage . '%)';
+		} elseif ($this->cart_has_course_products()) {
+			echo __('У кошику є курс, на курси кешбек не нараховується.', 'woo-cashback-system');
 		} elseif ($this->cart_has_discounted_products()) {
 			echo __('Товар у вас зі знижкою, він не проходить для кешбеку.', 'woo-cashback-system');
 		} else {
@@ -433,6 +455,7 @@ class WCS_Cashback_Checkout {
 		$percentage = ($calculation_base > 0 && $potential > 0) ? round(($potential / $calculation_base) * 100, 1) : 0;
 
 		$has_coupons = !empty(WC()->cart->get_applied_coupons());
+		$has_course_products = $this->cart_has_course_products();
 		$has_discounted_products = $this->cart_has_discounted_products();
 
 		$earning_html = '';
@@ -447,6 +470,11 @@ class WCS_Cashback_Checkout {
 			$earning_html = '<div class="wcs-potential-earning-block">'
 				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
 				. '<span class="wcs-no-earning">' . __('Не нараховується', 'woo-cashback-system') . '</span>'
+				. '</div>';
+		} elseif ($has_course_products) {
+			$earning_html = '<div class="wcs-potential-earning-block">'
+				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
+				. '<span class="wcs-no-earning">' . __('У кошику є курс, на курси кешбек не нараховується.', 'woo-cashback-system') . '</span>'
 				. '</div>';
 		} elseif ($has_discounted_products) {
 			$earning_html = '<div class="wcs-potential-earning-block">'
@@ -476,7 +504,7 @@ class WCS_Cashback_Checkout {
 			'potential'    => $potential,
 			'percentage'   => $percentage,
 			'subtotal'     => $subtotal,
-			'no_earn'      => ($applied > 0 || $has_coupons || $has_discounted_products),
+			'no_earn'      => ($applied > 0 || $has_coupons || $has_course_products || $has_discounted_products),
 			'earning_html' => $earning_html,
 		);
 
@@ -505,6 +533,7 @@ class WCS_Cashback_Checkout {
 		$max_allowed   = min($balance, round($cart_subtotal * ($usage_pct / 100), 2));
 		$applied       = $this->get_applied_amount();
 		$has_coupons   = (WC()->cart) ? !empty(WC()->cart->get_applied_coupons()) : false;
+		$has_course_products = $this->cart_has_course_products();
 		$has_discounted_products = $this->cart_has_discounted_products();
 
 		$potential  = 0;
@@ -530,6 +559,11 @@ class WCS_Cashback_Checkout {
 			$earning_html = '<div class="wcs-potential-earning-block">'
 				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
 				. '<span class="wcs-earn-amount">+' . wc_price($potential) . '</span> <small>(' . $percentage . '%)</small>'
+				. '</div>';
+		} elseif ($has_course_products) {
+			$earning_html = '<div class="wcs-potential-earning-block">'
+				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
+				. '<span class="wcs-no-earning">' . __('У кошику є курс, на курси кешбек не нараховується.', 'woo-cashback-system') . '</span>'
 				. '</div>';
 		} elseif ($has_discounted_products) {
 			$earning_html = '<div class="wcs-potential-earning-block">'
@@ -561,7 +595,7 @@ class WCS_Cashback_Checkout {
 			'percentage'    => $percentage,
 			'applied'       => $applied,
 			'max_allowed'   => $max_allowed,
-			'no_earn'       => ($applied > 0 || $has_coupons || $has_discounted_products),
+			'no_earn'       => ($applied > 0 || $has_coupons || $has_course_products || $has_discounted_products),
 			'block_html'    => $block_html,
 			'earning_html'  => $earning_html,
 		));

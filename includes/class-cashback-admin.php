@@ -138,6 +138,9 @@ class WCS_Cashback_Admin {
         
         if (isset($input['exclude_sale_items'])) $sanitized['exclude_sale_items'] = 'yes';
         elseif (isset($_POST['_wp_http_referer']) && strpos($_POST['_wp_http_referer'], 'tab=general') !== false) $sanitized['exclude_sale_items'] = 'no';
+
+        if (isset($input['allow_course_cashback'])) $sanitized['allow_course_cashback'] = 'yes';
+        elseif (isset($_POST['_wp_http_referer']) && strpos($_POST['_wp_http_referer'], 'tab=general') !== false) $sanitized['allow_course_cashback'] = 'no';
         
         $is_brands_tab = isset($_POST['_wp_http_referer']) && strpos($_POST['_wp_http_referer'], 'tab=brands') !== false;
 
@@ -203,6 +206,7 @@ class WCS_Cashback_Admin {
                 'usage_limit_percentage' => 50,
                 'enable_notifications' => 'yes',
                 'exclude_sale_items' => 'yes',
+                'allow_course_cashback' => 'no',
                 // New display settings
                 'cart_position' => 'woocommerce_cart_totals_before_order_total',
                 'checkout_position' => 'woocommerce_review_order_before_payment',
@@ -222,6 +226,7 @@ class WCS_Cashback_Admin {
         $settings['brand_rules'] = isset($settings['brand_rules']) ? (array)$settings['brand_rules'] : array();
         $settings['default_percentage'] = isset($settings['default_percentage']) ? floatval($settings['default_percentage']) : 5;
         $settings['exclude_sale_items'] = isset($settings['exclude_sale_items']) ? $settings['exclude_sale_items'] : 'yes';
+        $settings['allow_course_cashback'] = isset($settings['allow_course_cashback']) ? $settings['allow_course_cashback'] : 'no';
         
         ?>
         <div class="wrap">
@@ -309,6 +314,15 @@ class WCS_Cashback_Admin {
                             <p class="description">Якщо увімкнено, кешбек не нараховується на товари зі знижкою (sale).</p>
                         </td>
                     </tr>
+                    <tr>
+                        <th scope="row">
+                            <label for="allow_course_cashback">🎓 Курси</label>
+                        </th>
+                        <td>
+                            <input type="checkbox" name="wcs_cashback_settings[allow_course_cashback]" id="allow_course_cashback" value="yes" <?php checked($settings['allow_course_cashback'], 'yes'); ?>>
+                            <p class="description">Якщо увімкнено, кешбек буде нараховуватися на товари, прив'язані до курсів SmartLearn LMS. Якщо вимкнено, на курси кешбек не нараховується.</p>
+                        </td>
+                    </tr>
                 </table>
 
                 <?php elseif ($active_tab == 'brands'): ?>
@@ -375,7 +389,13 @@ class WCS_Cashback_Admin {
                                         } else {
                                             foreach ($rule_ids as $pid) {
                                                 $p = wc_get_product($pid);
-                                                if ($p) echo '<option value="'.$pid.'" selected>'.$p->get_name().'</option>';
+                                                if ($p) {
+                                                    $label = $p->get_name();
+                                                    if (class_exists('WCS_Cashback_Calculator') && WCS_Cashback_Calculator::is_course_product($pid)) {
+                                                        $label .= ' [Курс - без кешбеку]';
+                                                    }
+                                                    echo '<option value="'.$pid.'" selected>'.$label.'</option>';
+                                                }
                                             }
                                         }
                                         ?>
@@ -891,7 +911,13 @@ class WCS_Cashback_Admin {
         $results = array();
 
         foreach ($products as $p) {
-            $results[] = array('id' => $p->get_id(), 'text' => $p->get_name() . ' (ID: ' . $p->get_id() . ')');
+            $label = $p->get_name() . ' (ID: ' . $p->get_id() . ')';
+
+            if (class_exists('WCS_Cashback_Calculator') && WCS_Cashback_Calculator::is_course_product($p->get_id())) {
+                $label .= ' [Курс - без кешбеку]';
+            }
+
+            $results[] = array('id' => $p->get_id(), 'text' => $label);
         }
 
         wp_send_json($results);
@@ -1080,7 +1106,11 @@ class WCS_Cashback_Admin {
                                         foreach ($rule_product_ids as $pid) {
                                             $p = wc_get_product($pid);
                                             if ($p) {
-                                                $prod_names[] = esc_html($p->get_name());
+                                                $label = $p->get_name();
+                                                if (class_exists('WCS_Cashback_Calculator') && WCS_Cashback_Calculator::is_course_product($pid)) {
+                                                    $label .= ' [Курс - без кешбеку]';
+                                                }
+                                                $prod_names[] = esc_html($label);
                                             }
                                         }
                                         if (!empty($prod_names)) {
@@ -1124,7 +1154,16 @@ class WCS_Cashback_Admin {
                                             data-products='<?php echo esc_attr(json_encode(array_map(function($pid) {
                                                 $p = wc_get_product($pid);
                                                 $price_text = ($p && $p->get_price()) ? ' — ' . strip_tags(wc_price($p->get_price())) : '';
-                                                return $p ? array('id' => $pid, 'text' => $p->get_name() . $price_text . ' (ID: ' . $pid . ')') : null;
+                                                if (!$p) {
+                                                    return null;
+                                                }
+
+                                                $label = $p->get_name() . $price_text . ' (ID: ' . $pid . ')';
+                                                if (class_exists('WCS_Cashback_Calculator') && WCS_Cashback_Calculator::is_course_product($pid)) {
+                                                    $label .= ' [Курс - без кешбеку]';
+                                                }
+
+                                                return array('id' => $pid, 'text' => $label);
                                             }, $rule_product_ids))); ?>'
                                             data-discount-type="<?php echo esc_attr($rule['discount_type']); ?>"
                                             data-discount-value="<?php echo esc_attr($rule['discount_value']); ?>"
