@@ -148,6 +148,8 @@ jQuery(document).ready(function($) {
     var rulesContainer = $('.wcs-rules-list');
     var addRuleBtn = $('#wcs-add-rule');
     var brandTaxonomy = $('#brand_taxonomy');
+    var exclusionRulesContainer = $('.wcs-exclusion-rules-list');
+    var addExclusionRuleBtn = $('#wcs-add-exclusion-rule');
 
     function initSelect2(row) {
         var select = row.find('.wcs-select2-ajax');
@@ -230,5 +232,80 @@ jQuery(document).ready(function($) {
             url.searchParams.set('wcs_taxonomy', $(this).val());
             window.location.href = url.href;
         }
+    });
+
+    function getExclusionAction(type) {
+        if (type === 'brand') {
+            return 'wcs_search_brands';
+        }
+        if (type === 'product') {
+            return 'wcs_search_products';
+        }
+        return 'wcs_search_categories';
+    }
+
+    function initExclusionSelect2(row) {
+        var select = row.find('.wcs-exclusion-select2-ajax');
+        var typeSelect = row.find('.exclusion-type-select');
+
+        select.select2({
+            ajax: {
+                url: wcs_admin.ajax_url,
+                dataType: 'json',
+                delay: 250,
+                data: function(params) {
+                    return {
+                        action: getExclusionAction(typeSelect.val()),
+                        nonce: wcs_admin.nonce,
+                        term: params.term,
+                        taxonomy: brandTaxonomy.val()
+                    };
+                },
+                processResults: function(data) {
+                    return { results: data };
+                },
+                cache: true
+            },
+            placeholder: 'Почніть вводити назву...',
+            minimumInputLength: 1,
+            width: '100%'
+        });
+    }
+
+    $('.wcs-exclusion-rule-row').each(function() {
+        initExclusionSelect2($(this));
+    });
+
+    addExclusionRuleBtn.on('click', function() {
+        var index = exclusionRulesContainer.children().length;
+        var html = `
+            <div class="wcs-exclusion-rule-row" data-index="${index}" style="display:flex; gap:10px; margin-bottom:10px; border-bottom:1px solid #eee; padding-bottom:10px;">
+                <div class="col-type" style="width:170px;">
+                    <select name="wcs_cashback_settings[exclusion_rules][${index}][type]" class="exclusion-type-select">
+                        <option value="category">Категорія</option>
+                        <option value="brand">Бренд</option>
+                        <option value="product">Товар</option>
+                    </select>
+                </div>
+                <div class="col-select" style="flex:1;">
+                    <select name="wcs_cashback_settings[exclusion_rules][${index}][ids][]" class="exclusion-ids-select wcs-exclusion-select2-ajax" multiple style="width:100%;"></select>
+                </div>
+                <div class="col-action" style="width:40px;">
+                    <button type="button" class="button wcs-remove-exclusion-rule">❌</button>
+                </div>
+            </div>
+        `;
+        var newRow = $(html);
+        exclusionRulesContainer.append(newRow);
+        initExclusionSelect2(newRow);
+    });
+
+    exclusionRulesContainer.on('click', '.wcs-remove-exclusion-rule', function() {
+        $(this).closest('.wcs-exclusion-rule-row').remove();
+    });
+
+    exclusionRulesContainer.on('change', '.exclusion-type-select', function() {
+        var row = $(this).closest('.wcs-exclusion-rule-row');
+        row.find('.wcs-exclusion-select2-ajax').val(null).trigger('change');
     });
 });

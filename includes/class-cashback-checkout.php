@@ -180,10 +180,8 @@ class WCS_Cashback_Checkout {
 			echo '<td><span class="wcs-no-earning">' . __('Не нараховується', 'woo-cashback-system') . '</span></td>';
 		} elseif ($this->cart_has_course_products()) {
 			echo '<td><span class="wcs-no-earning">' . __('У кошику є курс, на курси кешбек не нараховується.', 'woo-cashback-system') . '</span></td>';
-		} elseif ($this->cart_has_excluded_categories()) {
-			echo '<td><span class="wcs-no-earning">' . __('У кошику є товар з виключеної категорії, кешбек не нараховується.', 'woo-cashback-system') . '</span></td>';
-		} elseif ($this->cart_has_excluded_brands()) {
-			echo '<td><span class="wcs-no-earning">' . __('У кошику є товар виключеного бренду, кешбек не нараховується.', 'woo-cashback-system') . '</span></td>';
+		} elseif ($this->cart_has_exclusions()) {
+			echo '<td><span class="wcs-no-earning">' . __('У кошику є товар, який входить у правила виключення кешбеку.', 'woo-cashback-system') . '</span></td>';
 		} elseif ($this->cart_has_discounted_products()) {
 			echo '<td><span class="wcs-no-earning">' . __('Товар у вас зі знижкою, він не проходить для кешбеку.', 'woo-cashback-system') . '</span></td>';
 		} else {
@@ -282,53 +280,60 @@ class WCS_Cashback_Checkout {
 	}
 
 	/**
-	 * Check if cart contains at least one product from excluded categories.
+	 * Check if cart matches at least one exclusion rule.
 	 */
-	private function cart_has_excluded_categories() {
+	private function cart_has_exclusions() {
 		if (!WC()->cart) {
 			return false;
 		}
 
 		$settings = $this->get_settings();
-		$excluded_category_ids = isset($settings['excluded_category_ids']) ? array_filter(array_map('absint', (array) $settings['excluded_category_ids'])) : array();
-		if (empty($excluded_category_ids)) {
-			return false;
-		}
-
-		foreach (WC()->cart->get_cart() as $cart_item) {
-			$product_id = isset($cart_item['product_id']) ? absint($cart_item['product_id']) : 0;
-			if ($product_id > 0) {
-				$product_category_ids = wc_get_product_cat_ids($product_id);
-				if (!empty(array_intersect($product_category_ids, $excluded_category_ids))) {
-					return true;
-				}
+		$exclusion_rules = isset($settings['exclusion_rules']) ? (array) $settings['exclusion_rules'] : array();
+		if (empty($exclusion_rules)) {
+			$legacy_category_ids = isset($settings['excluded_category_ids']) ? array_filter(array_map('absint', (array) $settings['excluded_category_ids'])) : array();
+			$legacy_brand_ids = isset($settings['excluded_brand_ids']) ? array_filter(array_map('absint', (array) $settings['excluded_brand_ids'])) : array();
+			if (!empty($legacy_category_ids)) {
+				$exclusion_rules[] = array('type' => 'category', 'ids' => $legacy_category_ids);
+			}
+			if (!empty($legacy_brand_ids)) {
+				$exclusion_rules[] = array('type' => 'brand', 'ids' => $legacy_brand_ids);
 			}
 		}
 
-		return false;
-	}
-
-	/**
-	 * Check if cart contains at least one product from excluded brands.
-	 */
-	private function cart_has_excluded_brands() {
-		if (!WC()->cart) {
-			return false;
-		}
-
-		$settings = $this->get_settings();
-		$excluded_brand_ids = isset($settings['excluded_brand_ids']) ? array_filter(array_map('absint', (array) $settings['excluded_brand_ids'])) : array();
 		$brand_taxonomy = isset($settings['brand_taxonomy']) ? sanitize_key($settings['brand_taxonomy']) : 'product_brand';
-		if (empty($excluded_brand_ids) || !taxonomy_exists($brand_taxonomy)) {
+		if (empty($exclusion_rules)) {
 			return false;
 		}
 
 		foreach (WC()->cart->get_cart() as $cart_item) {
 			$product_id = isset($cart_item['product_id']) ? absint($cart_item['product_id']) : 0;
-			if ($product_id > 0) {
-				$product_brand_ids = wp_get_post_terms($product_id, $brand_taxonomy, array('fields' => 'ids'));
-				if (!is_wp_error($product_brand_ids) && !empty(array_intersect($product_brand_ids, $excluded_brand_ids))) {
+			if ($product_id <= 0) {
+				continue;
+			}
+
+			foreach ($exclusion_rules as $rule) {
+				$rule_type = isset($rule['type']) ? $rule['type'] : 'category';
+				$rule_ids = isset($rule['ids']) ? array_filter(array_map('absint', (array) $rule['ids'])) : array();
+				if (empty($rule_ids)) {
+					continue;
+				}
+
+				if ($rule_type === 'product' && in_array($product_id, $rule_ids, true)) {
 					return true;
+				}
+
+				if ($rule_type === 'category') {
+					$product_category_ids = wc_get_product_cat_ids($product_id);
+					if (!empty(array_intersect($product_category_ids, $rule_ids))) {
+						return true;
+					}
+				}
+
+				if ($rule_type === 'brand' && taxonomy_exists($brand_taxonomy)) {
+					$product_brand_ids = wp_get_post_terms($product_id, $brand_taxonomy, array('fields' => 'ids'));
+					if (!is_wp_error($product_brand_ids) && !empty(array_intersect($product_brand_ids, $rule_ids))) {
+						return true;
+					}
 				}
 			}
 		}
@@ -490,10 +495,8 @@ class WCS_Cashback_Checkout {
 			echo wc_price($potential) . ' (' . $percentage . '%)';
 		} elseif ($this->cart_has_course_products()) {
 			echo __('У кошику є курс, на курси кешбек не нараховується.', 'woo-cashback-system');
-		} elseif ($this->cart_has_excluded_categories()) {
-			echo __('У кошику є товар з виключеної категорії, кешбек не нараховується.', 'woo-cashback-system');
-		} elseif ($this->cart_has_excluded_brands()) {
-			echo __('У кошику є товар виключеного бренду, кешбек не нараховується.', 'woo-cashback-system');
+		} elseif ($this->cart_has_exclusions()) {
+			echo __('У кошику є товар, який входить у правила виключення кешбеку.', 'woo-cashback-system');
 		} elseif ($this->cart_has_discounted_products()) {
 			echo __('Товар у вас зі знижкою, він не проходить для кешбеку.', 'woo-cashback-system');
 		} else {
@@ -539,8 +542,7 @@ class WCS_Cashback_Checkout {
 
 		$has_coupons = !empty(WC()->cart->get_applied_coupons());
 		$has_course_products = $this->cart_has_course_products();
-		$has_excluded_categories = $this->cart_has_excluded_categories();
-		$has_excluded_brands = $this->cart_has_excluded_brands();
+		$has_exclusions = $this->cart_has_exclusions();
 		$has_discounted_products = $this->cart_has_discounted_products();
 
 		$earning_html = '';
@@ -561,15 +563,10 @@ class WCS_Cashback_Checkout {
 				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
 				. '<span class="wcs-no-earning">' . __('У кошику є курс, на курси кешбек не нараховується.', 'woo-cashback-system') . '</span>'
 				. '</div>';
-		} elseif ($has_excluded_categories) {
+		} elseif ($has_exclusions) {
 			$earning_html = '<div class="wcs-potential-earning-block">'
 				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
-				. '<span class="wcs-no-earning">' . __('У кошику є товар з виключеної категорії, кешбек не нараховується.', 'woo-cashback-system') . '</span>'
-				. '</div>';
-		} elseif ($has_excluded_brands) {
-			$earning_html = '<div class="wcs-potential-earning-block">'
-				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
-				. '<span class="wcs-no-earning">' . __('У кошику є товар виключеного бренду, кешбек не нараховується.', 'woo-cashback-system') . '</span>'
+				. '<span class="wcs-no-earning">' . __('У кошику є товар, який входить у правила виключення кешбеку.', 'woo-cashback-system') . '</span>'
 				. '</div>';
 		} elseif ($has_discounted_products) {
 			$earning_html = '<div class="wcs-potential-earning-block">'
@@ -599,7 +596,7 @@ class WCS_Cashback_Checkout {
 			'potential'    => $potential,
 			'percentage'   => $percentage,
 			'subtotal'     => $subtotal,
-			'no_earn'      => ($applied > 0 || $has_coupons || $has_course_products || $has_excluded_categories || $has_excluded_brands || $has_discounted_products),
+			'no_earn'      => ($applied > 0 || $has_coupons || $has_course_products || $has_exclusions || $has_discounted_products),
 			'earning_html' => $earning_html,
 		);
 
@@ -634,8 +631,7 @@ class WCS_Cashback_Checkout {
 		$applied       = $this->get_applied_amount();
 		$has_coupons   = (WC()->cart) ? !empty(WC()->cart->get_applied_coupons()) : false;
 		$has_course_products = $this->cart_has_course_products();
-		$has_excluded_categories = $this->cart_has_excluded_categories();
-		$has_excluded_brands = $this->cart_has_excluded_brands();
+		$has_exclusions = $this->cart_has_exclusions();
 		$has_discounted_products = $this->cart_has_discounted_products();
 
 		$potential  = 0;
@@ -667,15 +663,10 @@ class WCS_Cashback_Checkout {
 				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
 				. '<span class="wcs-no-earning">' . __('У кошику є курс, на курси кешбек не нараховується.', 'woo-cashback-system') . '</span>'
 				. '</div>';
-		} elseif ($has_excluded_categories) {
+		} elseif ($has_exclusions) {
 			$earning_html = '<div class="wcs-potential-earning-block">'
 				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
-				. '<span class="wcs-no-earning">' . __('У кошику є товар з виключеної категорії, кешбек не нараховується.', 'woo-cashback-system') . '</span>'
-				. '</div>';
-		} elseif ($has_excluded_brands) {
-			$earning_html = '<div class="wcs-potential-earning-block">'
-				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
-				. '<span class="wcs-no-earning">' . __('У кошику є товар виключеного бренду, кешбек не нараховується.', 'woo-cashback-system') . '</span>'
+				. '<span class="wcs-no-earning">' . __('У кошику є товар, який входить у правила виключення кешбеку.', 'woo-cashback-system') . '</span>'
 				. '</div>';
 		} elseif ($has_discounted_products) {
 			$earning_html = '<div class="wcs-potential-earning-block">'
@@ -707,7 +698,7 @@ class WCS_Cashback_Checkout {
 			'percentage'    => $percentage,
 			'applied'       => $applied,
 			'max_allowed'   => $max_allowed,
-			'no_earn'       => ($applied > 0 || $has_coupons || $has_course_products || $has_excluded_categories || $has_excluded_brands || $has_discounted_products),
+			'no_earn'       => ($applied > 0 || $has_coupons || $has_course_products || $has_exclusions || $has_discounted_products),
 			'block_html'    => $block_html,
 			'earning_html'  => $earning_html,
 		));

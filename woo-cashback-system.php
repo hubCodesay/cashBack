@@ -3,7 +3,7 @@
  * Plugin Name: Cash Back
  * Plugin URI: https://example.com/woo-cashback-system
  * Description: A comprehensive cashback system for WooCommerce that allows users to earn and spend cashback on purchases with configurable rates and limits.
- * Version: 1.0.2
+ * Version: 1.0.3
  * Author: Андрей
  * Company: Stadion
  * Author URI: https://example.com
@@ -24,7 +24,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('WCS_VERSION', '1.0.2');
+define('WCS_VERSION', '1.0.3');
 define('WCS_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('WCS_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('WCS_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -85,6 +85,7 @@ function wcs_activate_plugin() {
         'disable_earning_when_using_cashback' => 'yes',
         'excluded_category_ids' => array(),
         'excluded_brand_ids' => array(),
+        'exclusion_rules' => array(),
     );
     
     if (!get_option('wcs_cashback_settings')) {

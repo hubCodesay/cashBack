@@ -27,6 +27,7 @@ class WCS_Cashback_Admin {
         add_action('wp_ajax_wcs_reset_user_balance', array($this, 'ajax_reset_user_balance'));
         
         // New search endpoints for rules
+        add_action('wp_ajax_wcs_search_categories', array($this, 'ajax_search_categories'));
         add_action('wp_ajax_wcs_search_brands',   array($this, 'ajax_search_brands'));
         add_action('wp_ajax_wcs_search_products', array($this, 'ajax_search_products'));
     }
@@ -166,6 +167,26 @@ class WCS_Cashback_Admin {
         if (isset($input['default_percentage'])) $sanitized['default_percentage'] = floatval($input['default_percentage']);
         if (isset($input['use_brands_logic'])) $sanitized['use_brands_logic'] = 'yes';
         elseif ($is_brands_tab) $sanitized['use_brands_logic'] = 'no';
+        if (isset($input['exclusion_rules']) && is_array($input['exclusion_rules'])) {
+            $sanitized_exclusion_rules = array();
+            foreach ($input['exclusion_rules'] as $rule) {
+                $type = isset($rule['type']) ? sanitize_key($rule['type']) : 'category';
+                if (!in_array($type, array('category', 'brand', 'product'), true)) {
+                    $type = 'category';
+                }
+
+                $ids = isset($rule['ids']) ? array_values(array_filter(array_map('intval', (array) $rule['ids']))) : array();
+                if (!empty($ids)) {
+                    $sanitized_exclusion_rules[] = array(
+                        'type' => $type,
+                        'ids' => $ids,
+                    );
+                }
+            }
+            $sanitized['exclusion_rules'] = $sanitized_exclusion_rules;
+        } elseif ($is_brands_tab) {
+            $sanitized['exclusion_rules'] = array();
+        }
         if (isset($input['excluded_category_ids'])) {
             $sanitized['excluded_category_ids'] = array_values(array_filter(array_map('intval', (array) $input['excluded_category_ids'])));
         } elseif ($is_brands_tab) {
@@ -231,6 +252,7 @@ class WCS_Cashback_Admin {
                 'default_percentage' => 5,
                 'excluded_category_ids' => array(),
                 'excluded_brand_ids' => array(),
+                'exclusion_rules' => array(),
             );
         }
         
@@ -246,6 +268,21 @@ class WCS_Cashback_Admin {
         $settings['disable_earning_when_using_cashback'] = isset($settings['disable_earning_when_using_cashback']) ? $settings['disable_earning_when_using_cashback'] : 'yes';
         $settings['excluded_category_ids'] = isset($settings['excluded_category_ids']) ? (array) $settings['excluded_category_ids'] : array();
         $settings['excluded_brand_ids'] = isset($settings['excluded_brand_ids']) ? (array) $settings['excluded_brand_ids'] : array();
+        $settings['exclusion_rules'] = isset($settings['exclusion_rules']) ? (array) $settings['exclusion_rules'] : array();
+        if (empty($settings['exclusion_rules'])) {
+            if (!empty($settings['excluded_category_ids'])) {
+                $settings['exclusion_rules'][] = array(
+                    'type' => 'category',
+                    'ids' => array_values(array_filter(array_map('intval', (array) $settings['excluded_category_ids']))),
+                );
+            }
+            if (!empty($settings['excluded_brand_ids'])) {
+                $settings['exclusion_rules'][] = array(
+                    'type' => 'brand',
+                    'ids' => array_values(array_filter(array_map('intval', (array) $settings['excluded_brand_ids']))),
+                );
+            }
+        }
         
         ?>
         <div class="wrap">
@@ -254,7 +291,7 @@ class WCS_Cashback_Admin {
             
             <h2 class="nav-tab-wrapper">
                 <a href="?page=wcs-cashback&tab=general" class="nav-tab <?php echo $active_tab == 'general' ? 'nav-tab-active' : ''; ?>">🛠️ Загальні</a>
-                <a href="?page=wcs-cashback&tab=brands" class="nav-tab <?php echo $active_tab == 'brands' ? 'nav-tab-active' : ''; ?>">🏷️ Бренди</a>
+                <a href="?page=wcs-cashback&tab=brands" class="nav-tab <?php echo $active_tab == 'brands' ? 'nav-tab-active' : ''; ?>">🧩 Універсальна</a>
                 <a href="?page=wcs-cashback&tab=display" class="nav-tab <?php echo $active_tab == 'display' ? 'nav-tab-active' : ''; ?>">🎨 Вигляд</a>
             </h2>
             
@@ -360,8 +397,8 @@ class WCS_Cashback_Admin {
                     <table class="form-table">
                         <tr>
                             <th colspan="2">
-                                <h2>🏷️ Налаштування Правил Кешбеку</h2>
-                                <p class="description">Створюйте правила для різних брендів або конкретних товарів (винятків).</p>
+                                <h2>🧩 Універсальні Правила Кешбеку</h2>
+                                <p class="description">Тут керуються і бренд-правила кешбеку, і виключення кешбеку для категорій, брендів або конкретних товарів.</p>
                             </th>
                         </tr>
                         <tr>
@@ -381,45 +418,66 @@ class WCS_Cashback_Admin {
                                 </select>
                             </td>
                         </tr>
-                        <tr>
-                            <th scope="row"><label for="excluded_category_ids">🚫 Виключені категорії</label></th>
-                            <td>
-                                <select name="wcs_cashback_settings[excluded_category_ids][]" id="excluded_category_ids" multiple style="width: 100%; max-width: 520px; min-height: 140px;">
-                                    <?php
-                                    $product_categories = get_terms(array(
-                                        'taxonomy' => 'product_cat',
-                                        'hide_empty' => false,
-                                    ));
-                                    if (!is_wp_error($product_categories)) {
-                                        foreach ($product_categories as $category) {
-                                            echo '<option value="' . esc_attr($category->term_id) . '" ' . selected(in_array((int) $category->term_id, array_map('intval', $settings['excluded_category_ids']), true), true, false) . '>' . esc_html($category->name) . '</option>';
-                                        }
-                                    }
-                                    ?>
-                                </select>
-                                <p class="description">Якщо товар у кошику має хоча б одну з цих категорій, кешбек на все замовлення не нараховується.</p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th scope="row"><label for="excluded_brand_ids">🚫 Виключені бренди</label></th>
-                            <td>
-                                <select name="wcs_cashback_settings[excluded_brand_ids][]" id="excluded_brand_ids" multiple style="width: 100%; max-width: 520px; min-height: 140px;">
-                                    <?php
-                                    $excluded_brand_terms = taxonomy_exists($settings['brand_taxonomy']) ? get_terms(array(
-                                        'taxonomy' => $settings['brand_taxonomy'],
-                                        'hide_empty' => false,
-                                    )) : array();
-                                    if (!is_wp_error($excluded_brand_terms)) {
-                                        foreach ($excluded_brand_terms as $term) {
-                                            echo '<option value="' . esc_attr($term->term_id) . '" ' . selected(in_array((int) $term->term_id, array_map('intval', $settings['excluded_brand_ids']), true), true, false) . '>' . esc_html($term->name) . '</option>';
-                                        }
-                                    }
-                                    ?>
-                                </select>
-                                <p class="description">Якщо товар у кошику має хоча б один з цих брендів, кешбек на все замовлення не нараховується.</p>
-                            </td>
-                        </tr>
                     </table>
+
+                    <div id="wcs-exclusion-rules-container" style="background:#fff; border:1px solid #ccd0d4; padding:20px; border-radius:4px; margin:20px 0;">
+                        <div class="wcs-rules-header">
+                            <h3 style="margin:0 0 8px 0;">🚫 Виключення Кешбеку</h3>
+                            <p class="description" style="margin:0 0 16px 0;">Додавайте універсальні виключення для категорій, брендів або конкретних товарів. Якщо в кошику є збіг хоча б по одному правилу, кешбек не нараховується.</p>
+                        </div>
+
+                        <div class="wcs-exclusion-rules-list">
+                            <?php
+                            $exclusion_rules = !empty($settings['exclusion_rules']) ? $settings['exclusion_rules'] : array();
+                            foreach ($exclusion_rules as $index => $rule):
+                                $rule_type = $rule['type'] ?? 'category';
+                                $rule_ids  = (array) ($rule['ids'] ?? array());
+                            ?>
+                            <div class="wcs-exclusion-rule-row" data-index="<?php echo $index; ?>" style="display:flex; gap:10px; margin-bottom:10px; border-bottom:1px solid #eee; padding-bottom:10px;">
+                                <div class="col-type" style="width:170px;">
+                                    <select name="wcs_cashback_settings[exclusion_rules][<?php echo $index; ?>][type]" class="exclusion-type-select">
+                                        <option value="category" <?php selected($rule_type, 'category'); ?>>Категорія</option>
+                                        <option value="brand" <?php selected($rule_type, 'brand'); ?>>Бренд</option>
+                                        <option value="product" <?php selected($rule_type, 'product'); ?>>Товар</option>
+                                    </select>
+                                </div>
+                                <div class="col-select" style="flex:1;">
+                                    <select name="wcs_cashback_settings[exclusion_rules][<?php echo $index; ?>][ids][]" class="exclusion-ids-select wcs-exclusion-select2-ajax" multiple style="width:100%;">
+                                        <?php
+                                        if ($rule_type === 'category') {
+                                            foreach ($rule_ids as $term_id) {
+                                                $term = get_term($term_id, 'product_cat');
+                                                if ($term && !is_wp_error($term)) {
+                                                    echo '<option value="' . esc_attr($term_id) . '" selected>' . esc_html($term->name) . '</option>';
+                                                }
+                                            }
+                                        } elseif ($rule_type === 'brand') {
+                                            foreach ($rule_ids as $term_id) {
+                                                $term = get_term($term_id, $settings['brand_taxonomy']);
+                                                if ($term && !is_wp_error($term)) {
+                                                    echo '<option value="' . esc_attr($term_id) . '" selected>' . esc_html($term->name) . '</option>';
+                                                }
+                                            }
+                                        } else {
+                                            foreach ($rule_ids as $product_id) {
+                                                $product = wc_get_product($product_id);
+                                                if ($product) {
+                                                    echo '<option value="' . esc_attr($product_id) . '" selected>' . esc_html($product->get_name()) . '</option>';
+                                                }
+                                            }
+                                        }
+                                        ?>
+                                    </select>
+                                </div>
+                                <div class="col-action" style="width:40px;">
+                                    <button type="button" class="button wcs-remove-exclusion-rule">❌</button>
+                                </div>
+                            </div>
+                            <?php endforeach; ?>
+                        </div>
+
+                        <button type="button" id="wcs-add-exclusion-rule" class="button button-secondary">➕ Додати виключення</button>
+                    </div>
 
                     <div id="wcs-brand-rules-container">
                         <div class="wcs-rules-header">
@@ -949,6 +1007,32 @@ class WCS_Cashback_Admin {
         $terms = get_terms($args);
         $results = array();
 
+        if (!is_wp_error($terms) && !empty($terms)) {
+            foreach ($terms as $t) {
+                $results[] = array('id' => $t->term_id, 'text' => $t->name);
+            }
+        }
+
+        wp_send_json($results);
+    }
+
+    /* ═══════════════════════════════════════════════════════
+     *  AJAX — Search Categories
+     * ═══════════════════════════════════════════════════════ */
+    public function ajax_search_categories() {
+        check_ajax_referer('wcs_admin_nonce', 'nonce');
+        if (!current_user_can('manage_woocommerce')) wp_send_json_error();
+
+        $term = isset($_GET['term']) ? sanitize_text_field($_GET['term']) : '';
+
+        $terms = get_terms(array(
+            'taxonomy'   => 'product_cat',
+            'hide_empty' => false,
+            'search'     => $term,
+            'number'     => 50,
+        ));
+
+        $results = array();
         if (!is_wp_error($terms) && !empty($terms)) {
             foreach ($terms as $t) {
                 $results[] = array('id' => $t->term_id, 'text' => $t->name);

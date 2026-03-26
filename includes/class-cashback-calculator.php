@@ -57,7 +57,23 @@ class WCS_Cashback_Calculator {
             'disable_earning_when_using_cashback' => isset($settings['disable_earning_when_using_cashback']) ? $settings['disable_earning_when_using_cashback'] : 'yes',
             'excluded_category_ids' => isset($settings['excluded_category_ids']) ? array_values(array_filter(array_map('absint', (array) $settings['excluded_category_ids']))) : array(),
             'excluded_brand_ids'    => isset($settings['excluded_brand_ids']) ? array_values(array_filter(array_map('absint', (array) $settings['excluded_brand_ids']))) : array(),
+            'exclusion_rules'       => isset($settings['exclusion_rules']) ? (array) $settings['exclusion_rules'] : array(),
         );
+
+        if (empty(self::$settings_cache['exclusion_rules'])) {
+            if (!empty(self::$settings_cache['excluded_category_ids'])) {
+                self::$settings_cache['exclusion_rules'][] = array(
+                    'type' => 'category',
+                    'ids' => self::$settings_cache['excluded_category_ids'],
+                );
+            }
+            if (!empty(self::$settings_cache['excluded_brand_ids'])) {
+                self::$settings_cache['exclusion_rules'][] = array(
+                    'type' => 'brand',
+                    'ids' => self::$settings_cache['excluded_brand_ids'],
+                );
+            }
+        }
 
         return self::$settings_cache;
     }
@@ -213,8 +229,7 @@ class WCS_Cashback_Calculator {
         $use_brands = isset($settings['use_brands_logic']) && $settings['use_brands_logic'] === 'yes';
         $exclude_sale_items = isset($settings['exclude_sale_items']) && $settings['exclude_sale_items'] === 'yes';
         $allow_course_cashback = isset($settings['allow_course_cashback']) && $settings['allow_course_cashback'] === 'yes';
-        $excluded_category_ids = isset($settings['excluded_category_ids']) ? (array) $settings['excluded_category_ids'] : array();
-        $excluded_brand_ids = isset($settings['excluded_brand_ids']) ? (array) $settings['excluded_brand_ids'] : array();
+        $exclusion_rules = isset($settings['exclusion_rules']) ? (array) $settings['exclusion_rules'] : array();
         $subtotal = floatval($subtotal);
         $cashback_used = floatval($cashback_used);
 
@@ -279,8 +294,7 @@ class WCS_Cashback_Calculator {
         $eligible_items = array();
         $has_sale_items = false;
         $has_course_items = false;
-        $has_excluded_category_items = false;
-        $has_excluded_brand_items = false;
+        $has_excluded_items = false;
         $brand_taxonomy = isset($settings['brand_taxonomy']) ? $settings['brand_taxonomy'] : 'product_brand';
         foreach ($items as $item) {
             if (!empty($item['is_sale'])) {
@@ -290,17 +304,32 @@ class WCS_Cashback_Calculator {
                 $has_course_items = true;
             }
 
-            if (!empty($excluded_category_ids)) {
-                $product_category_ids = wc_get_product_cat_ids($item['id']);
-                if (!empty(array_intersect($product_category_ids, $excluded_category_ids))) {
-                    $has_excluded_category_items = true;
+            foreach ($exclusion_rules as $rule) {
+                $rule_type = isset($rule['type']) ? $rule['type'] : 'category';
+                $rule_ids = isset($rule['ids']) ? array_values(array_filter(array_map('absint', (array) $rule['ids']))) : array();
+                if (empty($rule_ids)) {
+                    continue;
                 }
-            }
 
-            if (!empty($excluded_brand_ids) && taxonomy_exists($brand_taxonomy)) {
-                $product_brand_ids = wp_get_post_terms($item['id'], $brand_taxonomy, array('fields' => 'ids'));
-                if (!is_wp_error($product_brand_ids) && !empty(array_intersect($product_brand_ids, $excluded_brand_ids))) {
-                    $has_excluded_brand_items = true;
+                if ($rule_type === 'product' && in_array($item['id'], $rule_ids, true)) {
+                    $has_excluded_items = true;
+                    break;
+                }
+
+                if ($rule_type === 'category') {
+                    $product_category_ids = wc_get_product_cat_ids($item['id']);
+                    if (!empty(array_intersect($product_category_ids, $rule_ids))) {
+                        $has_excluded_items = true;
+                        break;
+                    }
+                }
+
+                if ($rule_type === 'brand' && taxonomy_exists($brand_taxonomy)) {
+                    $product_brand_ids = wp_get_post_terms($item['id'], $brand_taxonomy, array('fields' => 'ids'));
+                    if (!is_wp_error($product_brand_ids) && !empty(array_intersect($product_brand_ids, $rule_ids))) {
+                        $has_excluded_items = true;
+                        break;
+                    }
                 }
             }
 
@@ -319,7 +348,7 @@ class WCS_Cashback_Calculator {
             return 0;
         }
 
-        if ($has_excluded_category_items || $has_excluded_brand_items) {
+        if ($has_excluded_items) {
             return 0;
         }
 
