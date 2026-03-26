@@ -153,7 +153,7 @@ class WCS_Cashback_Admin {
             $sanitized_rules = array();
             foreach ($input['brand_rules'] as $rule) {
                 $sanitized_rules[] = array(
-                    'type'       => in_array($rule['type'], array('brand', 'product'), true) ? $rule['type'] : 'brand',
+                    'type'       => in_array($rule['type'], array('category', 'brand', 'product'), true) ? $rule['type'] : 'brand',
                     'ids'        => isset($rule['ids']) ? array_map('intval', (array) $rule['ids']) : array(),
                     'percentage' => floatval($rule['percentage'])
                 );
@@ -482,7 +482,7 @@ class WCS_Cashback_Admin {
                     <div id="wcs-brand-rules-container">
                         <div class="wcs-rules-header">
                             <div class="col-type" style="width:150px; font-weight:bold;">Тип</div>
-                            <div class="col-select" style="flex:1; font-weight:bold;">Бренди / Товари</div>
+                            <div class="col-select" style="flex:1; font-weight:bold;">Категорії / Бренди / Товари</div>
                             <div class="col-pct" style="width:100px; font-weight:bold;">Кешбек %</div>
                             <div class="col-action" style="width:40px;"></div>
                         </div>
@@ -498,6 +498,7 @@ class WCS_Cashback_Admin {
                             <div class="wcs-rule-row" data-index="<?php echo $index; ?>" style="display:flex; gap:10px; margin-bottom:10px; border-bottom:1px solid #eee; padding-bottom:10px;">
                                 <div class="col-type" style="width:150px;">
                                     <select name="wcs_cashback_settings[brand_rules][<?php echo $index; ?>][type]" class="rule-type-select">
+                                        <option value="category" <?php selected($rule_type, 'category'); ?>>Категорія</option>
                                         <option value="brand" <?php selected($rule_type, 'brand'); ?>>Бренд</option>
                                         <option value="product" <?php selected($rule_type, 'product'); ?>>Товар (Виняток)</option>
                                     </select>
@@ -505,7 +506,12 @@ class WCS_Cashback_Admin {
                                 <div class="col-select" style="flex:1;">
                                     <select name="wcs_cashback_settings[brand_rules][<?php echo $index; ?>][ids][]" class="rule-ids-select wcs-select2-ajax" multiple style="width: 100%;">
                                         <?php 
-                                        if ($rule_type === 'brand') {
+                                        if ($rule_type === 'category') {
+                                            foreach ($rule_ids as $tid) {
+                                                $term = get_term($tid, 'product_cat');
+                                                if ($term && !is_wp_error($term)) echo '<option value="'.$tid.'" selected>'.$term->name.'</option>';
+                                            }
+                                        } elseif ($rule_type === 'brand') {
                                             foreach ($rule_ids as $tid) {
                                                 $term = get_term($tid, $settings['brand_taxonomy']);
                                                 if ($term) echo '<option value="'.$tid.'" selected>'.$term->name.'</option>';

@@ -391,7 +391,20 @@ class WCS_Cashback_Calculator {
                 }
             }
 
-            // Priority 2: Brand rules
+            // Priority 2: Category rules
+            if ($matched_pct === null) {
+                foreach ($rules as $rule) {
+                    if (($rule['type'] ?? '') === 'category') {
+                        $product_category_ids = wc_get_product_cat_ids($product_id);
+                        if (!empty(array_intersect($product_category_ids, (array)($rule['ids'] ?? array())))) {
+                            $matched_pct = floatval($rule['percentage']);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Priority 3: Brand rules
             if ($matched_pct === null) {
                 $product_brand_ids = wp_get_post_terms($product_id, $brand_taxonomy, array('fields' => 'ids'));
                 if (!is_wp_error($product_brand_ids) && !empty($product_brand_ids)) {

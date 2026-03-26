@@ -163,7 +163,7 @@ jQuery(document).ready(function($) {
                 data: function (params) {
                     var type = typeSelect.val();
                     return {
-                        action: type === 'brand' ? 'wcs_search_brands' : 'wcs_search_products',
+                        action: type === 'category' ? 'wcs_search_categories' : (type === 'brand' ? 'wcs_search_brands' : 'wcs_search_products'),
                         nonce: wcs_admin.nonce,
                         term: params.term,
                         taxonomy: brandTaxonomy.val()
@@ -192,6 +192,7 @@ jQuery(document).ready(function($) {
             <div class="wcs-rule-row" data-index="${index}">
                 <div class="col-type">
                     <select name="wcs_cashback_settings[brand_rules][${index}][type]" class="rule-type-select">
+                        <option value="category">Категорія</option>
                         <option value="brand">Бренд</option>
                         <option value="product">Товар (Виняток)</option>
                     </select>
