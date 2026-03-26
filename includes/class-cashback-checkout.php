@@ -16,6 +16,13 @@ if (!defined('ABSPATH')) {
 class WCS_Cashback_Checkout {
 	private static $instance = null;
 
+	/**
+	 * Request-level settings cache.
+	 *
+	 * @var array|null
+	 */
+	private static $settings_cache = null;
+
 	/** Track whether each context block was already rendered (prevent duplicates) */
 	private $rendered = array('cart' => false, 'checkout' => false);
 
@@ -30,14 +37,27 @@ class WCS_Cashback_Checkout {
 	 * Get the saved position settings from admin panel
 	 */
 	private function get_position_settings() {
-		$settings = get_option('wcs_cashback_settings');
-		if (!is_array($settings)) {
-			$settings = array();
-		}
+		$settings = $this->get_settings();
 		return array(
 			'cart'     => isset($settings['cart_position']) ? $settings['cart_position'] : 'woocommerce_before_cart_totals',
 			'checkout' => isset($settings['checkout_position']) ? $settings['checkout_position'] : 'woocommerce_review_order_before_payment',
 		);
+	}
+
+	/**
+	 * Return plugin settings cached for the current request.
+	 *
+	 * @return array
+	 */
+	private function get_settings() {
+		if (self::$settings_cache !== null) {
+			return self::$settings_cache;
+		}
+
+		$settings = get_option('wcs_cashback_settings');
+		self::$settings_cache = is_array($settings) ? $settings : array();
+
+		return self::$settings_cache;
 	}
 
 	private function __construct() {
@@ -160,6 +180,10 @@ class WCS_Cashback_Checkout {
 			echo '<td><span class="wcs-no-earning">' . __('Не нараховується', 'woo-cashback-system') . '</span></td>';
 		} elseif ($this->cart_has_course_products()) {
 			echo '<td><span class="wcs-no-earning">' . __('У кошику є курс, на курси кешбек не нараховується.', 'woo-cashback-system') . '</span></td>';
+		} elseif ($this->cart_has_excluded_categories()) {
+			echo '<td><span class="wcs-no-earning">' . __('У кошику є товар з виключеної категорії, кешбек не нараховується.', 'woo-cashback-system') . '</span></td>';
+		} elseif ($this->cart_has_excluded_brands()) {
+			echo '<td><span class="wcs-no-earning">' . __('У кошику є товар виключеного бренду, кешбек не нараховується.', 'woo-cashback-system') . '</span></td>';
 		} elseif ($this->cart_has_discounted_products()) {
 			echo '<td><span class="wcs-no-earning">' . __('Товар у вас зі знижкою, він не проходить для кешбеку.', 'woo-cashback-system') . '</span></td>';
 		} else {
@@ -214,7 +238,7 @@ class WCS_Cashback_Checkout {
 	 * Return true if sale-item exclusion is enabled in admin settings.
 	 */
 	private function is_sale_exclusion_enabled() {
-		$settings = get_option('wcs_cashback_settings');
+		$settings = $this->get_settings();
 		return is_array($settings) && isset($settings['exclude_sale_items']) && $settings['exclude_sale_items'] === 'yes';
 	}
 
@@ -251,6 +275,61 @@ class WCS_Cashback_Checkout {
 			$product_id = isset($cart_item['product_id']) ? absint($cart_item['product_id']) : 0;
 			if ($product_id > 0 && WCS_Cashback_Calculator::is_course_product($product_id)) {
 				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check if cart contains at least one product from excluded categories.
+	 */
+	private function cart_has_excluded_categories() {
+		if (!WC()->cart) {
+			return false;
+		}
+
+		$settings = $this->get_settings();
+		$excluded_category_ids = isset($settings['excluded_category_ids']) ? array_filter(array_map('absint', (array) $settings['excluded_category_ids'])) : array();
+		if (empty($excluded_category_ids)) {
+			return false;
+		}
+
+		foreach (WC()->cart->get_cart() as $cart_item) {
+			$product_id = isset($cart_item['product_id']) ? absint($cart_item['product_id']) : 0;
+			if ($product_id > 0) {
+				$product_category_ids = wc_get_product_cat_ids($product_id);
+				if (!empty(array_intersect($product_category_ids, $excluded_category_ids))) {
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check if cart contains at least one product from excluded brands.
+	 */
+	private function cart_has_excluded_brands() {
+		if (!WC()->cart) {
+			return false;
+		}
+
+		$settings = $this->get_settings();
+		$excluded_brand_ids = isset($settings['excluded_brand_ids']) ? array_filter(array_map('absint', (array) $settings['excluded_brand_ids'])) : array();
+		$brand_taxonomy = isset($settings['brand_taxonomy']) ? sanitize_key($settings['brand_taxonomy']) : 'product_brand';
+		if (empty($excluded_brand_ids) || !taxonomy_exists($brand_taxonomy)) {
+			return false;
+		}
+
+		foreach (WC()->cart->get_cart() as $cart_item) {
+			$product_id = isset($cart_item['product_id']) ? absint($cart_item['product_id']) : 0;
+			if ($product_id > 0) {
+				$product_brand_ids = wp_get_post_terms($product_id, $brand_taxonomy, array('fields' => 'ids'));
+				if (!is_wp_error($product_brand_ids) && !empty(array_intersect($product_brand_ids, $excluded_brand_ids))) {
+					return true;
+				}
 			}
 		}
 
@@ -411,6 +490,10 @@ class WCS_Cashback_Checkout {
 			echo wc_price($potential) . ' (' . $percentage . '%)';
 		} elseif ($this->cart_has_course_products()) {
 			echo __('У кошику є курс, на курси кешбек не нараховується.', 'woo-cashback-system');
+		} elseif ($this->cart_has_excluded_categories()) {
+			echo __('У кошику є товар з виключеної категорії, кешбек не нараховується.', 'woo-cashback-system');
+		} elseif ($this->cart_has_excluded_brands()) {
+			echo __('У кошику є товар виключеного бренду, кешбек не нараховується.', 'woo-cashback-system');
 		} elseif ($this->cart_has_discounted_products()) {
 			echo __('Товар у вас зі знижкою, він не проходить для кешбеку.', 'woo-cashback-system');
 		} else {
@@ -456,6 +539,8 @@ class WCS_Cashback_Checkout {
 
 		$has_coupons = !empty(WC()->cart->get_applied_coupons());
 		$has_course_products = $this->cart_has_course_products();
+		$has_excluded_categories = $this->cart_has_excluded_categories();
+		$has_excluded_brands = $this->cart_has_excluded_brands();
 		$has_discounted_products = $this->cart_has_discounted_products();
 
 		$earning_html = '';
@@ -475,6 +560,16 @@ class WCS_Cashback_Checkout {
 			$earning_html = '<div class="wcs-potential-earning-block">'
 				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
 				. '<span class="wcs-no-earning">' . __('У кошику є курс, на курси кешбек не нараховується.', 'woo-cashback-system') . '</span>'
+				. '</div>';
+		} elseif ($has_excluded_categories) {
+			$earning_html = '<div class="wcs-potential-earning-block">'
+				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
+				. '<span class="wcs-no-earning">' . __('У кошику є товар з виключеної категорії, кешбек не нараховується.', 'woo-cashback-system') . '</span>'
+				. '</div>';
+		} elseif ($has_excluded_brands) {
+			$earning_html = '<div class="wcs-potential-earning-block">'
+				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
+				. '<span class="wcs-no-earning">' . __('У кошику є товар виключеного бренду, кешбек не нараховується.', 'woo-cashback-system') . '</span>'
 				. '</div>';
 		} elseif ($has_discounted_products) {
 			$earning_html = '<div class="wcs-potential-earning-block">'
@@ -504,7 +599,7 @@ class WCS_Cashback_Checkout {
 			'potential'    => $potential,
 			'percentage'   => $percentage,
 			'subtotal'     => $subtotal,
-			'no_earn'      => ($applied > 0 || $has_coupons || $has_course_products || $has_discounted_products),
+			'no_earn'      => ($applied > 0 || $has_coupons || $has_course_products || $has_excluded_categories || $has_excluded_brands || $has_discounted_products),
 			'earning_html' => $earning_html,
 		);
 
@@ -515,6 +610,11 @@ class WCS_Cashback_Checkout {
 	 *  AJAX — Get cashback data (for blocks mode refresh)
 	 * ═══════════════════════════════════════════════════════ */
 	public function ajax_get_cashback_data() {
+		$nonce = isset($_POST['nonce']) ? sanitize_text_field($_POST['nonce']) : '';
+		if (!wp_verify_nonce($nonce, 'wcs_public_nonce')) {
+			wp_send_json_error(array('message' => __('Невірний токен безпеки.', 'woo-cashback-system')));
+		}
+
 		if (!function_exists('wc_price')) {
 			wp_send_json_error(array('message' => 'WooCommerce not loaded'));
 		}
@@ -534,6 +634,8 @@ class WCS_Cashback_Checkout {
 		$applied       = $this->get_applied_amount();
 		$has_coupons   = (WC()->cart) ? !empty(WC()->cart->get_applied_coupons()) : false;
 		$has_course_products = $this->cart_has_course_products();
+		$has_excluded_categories = $this->cart_has_excluded_categories();
+		$has_excluded_brands = $this->cart_has_excluded_brands();
 		$has_discounted_products = $this->cart_has_discounted_products();
 
 		$potential  = 0;
@@ -565,6 +667,16 @@ class WCS_Cashback_Checkout {
 				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
 				. '<span class="wcs-no-earning">' . __('У кошику є курс, на курси кешбек не нараховується.', 'woo-cashback-system') . '</span>'
 				. '</div>';
+		} elseif ($has_excluded_categories) {
+			$earning_html = '<div class="wcs-potential-earning-block">'
+				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
+				. '<span class="wcs-no-earning">' . __('У кошику є товар з виключеної категорії, кешбек не нараховується.', 'woo-cashback-system') . '</span>'
+				. '</div>';
+		} elseif ($has_excluded_brands) {
+			$earning_html = '<div class="wcs-potential-earning-block">'
+				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
+				. '<span class="wcs-no-earning">' . __('У кошику є товар виключеного бренду, кешбек не нараховується.', 'woo-cashback-system') . '</span>'
+				. '</div>';
 		} elseif ($has_discounted_products) {
 			$earning_html = '<div class="wcs-potential-earning-block">'
 				. '<span class="wcs-earning-label">' . __('Кешбек з цього замовлення', 'woo-cashback-system') . '</span>'
@@ -595,7 +707,7 @@ class WCS_Cashback_Checkout {
 			'percentage'    => $percentage,
 			'applied'       => $applied,
 			'max_allowed'   => $max_allowed,
-			'no_earn'       => ($applied > 0 || $has_coupons || $has_course_products || $has_discounted_products),
+			'no_earn'       => ($applied > 0 || $has_coupons || $has_course_products || $has_excluded_categories || $has_excluded_brands || $has_discounted_products),
 			'block_html'    => $block_html,
 			'earning_html'  => $earning_html,
 		));
@@ -720,8 +832,7 @@ class WCS_Cashback_Checkout {
 
 		if ($applied > 0) {
 			$order->update_meta_data('_wcs_cashback_used', $applied);
-			// Flag: cashback was used → do NOT earn
-			$order->update_meta_data('_wcs_cashback_skip_earning', 'yes');
+			$order->update_meta_data('_wcs_cashback_skip_earning', $this->should_skip_earning_when_cashback_used() ? 'yes' : 'no');
 		} else {
 			$order->update_meta_data('_wcs_cashback_used', 0);
 			$order->update_meta_data('_wcs_cashback_skip_earning', 'no');
@@ -746,7 +857,7 @@ class WCS_Cashback_Checkout {
 
 		if ($applied > 0) {
 			$order->update_meta_data('_wcs_cashback_used', $applied);
-			$order->update_meta_data('_wcs_cashback_skip_earning', 'yes');
+			$order->update_meta_data('_wcs_cashback_skip_earning', $this->should_skip_earning_when_cashback_used() ? 'yes' : 'no');
 		} else {
 			$order->update_meta_data('_wcs_cashback_used', 0);
 			$order->update_meta_data('_wcs_cashback_skip_earning', 'no');
@@ -805,7 +916,8 @@ class WCS_Cashback_Checkout {
 
 		// ── 1. Deduct used cashback ──
 		if ($cashback_used > 0) {
-			$before = floatval(WCS_Cashback_Database::get_user_balance($user_id)->balance);
+			$balance_data = WCS_Cashback_Database::get_user_balance($user_id);
+			$before = floatval($balance_data->balance);
 			WCS_Cashback_Database::update_balance($user_id, $cashback_used, 'spent');
 			$after  = floatval(WCS_Cashback_Database::get_user_balance($user_id)->balance);
 
@@ -822,7 +934,7 @@ class WCS_Cashback_Checkout {
 		}
 
 		// ── 2. Earn cashback ──
-		if (class_exists('WCS_Cashback_Calculator')) {
+		if ($skip_earning !== 'yes' && class_exists('WCS_Cashback_Calculator')) {
 			// Base calculation on Subtotal minus Used Cashback
 			$subtotal = floatval($order->get_subtotal());
 			$calculation_base = max(0, $subtotal - $cashback_used);
@@ -833,7 +945,8 @@ class WCS_Cashback_Checkout {
 			if ($earned > 0) {
 				// Check max limit
 				$max_limit   = WCS_Cashback_Calculator::get_max_cashback_limit();
-				$current_bal = floatval(WCS_Cashback_Database::get_user_balance($user_id)->balance);
+				$current_balance_data = WCS_Cashback_Database::get_user_balance($user_id);
+				$current_bal = floatval($current_balance_data->balance);
 
 				if ($max_limit > 0 && ($current_bal + $earned) > $max_limit) {
 					$earned = max(0, $max_limit - $current_bal);
@@ -907,5 +1020,20 @@ class WCS_Cashback_Checkout {
 		WC()->session->set('wcs_applied_cashback', floatval($amount));
 		// Legacy key cleanup
 		WC()->session->set('wcs_cashback_to_use', floatval($amount));
+	}
+
+	/**
+	 * Whether earning cashback should be blocked when cashback was used.
+	 *
+	 * @return bool
+	 */
+	private function should_skip_earning_when_cashback_used() {
+		if (class_exists('WCS_Cashback_Calculator')) {
+			return WCS_Cashback_Calculator::should_disable_earning_when_using_cashback();
+		}
+
+		$settings = $this->get_settings();
+
+		return isset($settings['disable_earning_when_using_cashback']) && $settings['disable_earning_when_using_cashback'] === 'yes';
 	}
 }

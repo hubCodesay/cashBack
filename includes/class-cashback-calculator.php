@@ -11,6 +11,13 @@ if (!defined('ABSPATH')) {
 
 class WCS_Cashback_Calculator {
     /**
+     * Request-level settings cache.
+     *
+     * @var array|null
+     */
+    private static $settings_cache = null;
+
+    /**
      * Cached list of WooCommerce product IDs linked to LMS courses.
      *
      * @var array|null
@@ -23,12 +30,16 @@ class WCS_Cashback_Calculator {
      * @return array
      */
     private static function get_settings() {
+        if (self::$settings_cache !== null) {
+            return self::$settings_cache;
+        }
+
         $settings = get_option('wcs_cashback_settings');
         if (!is_array($settings)) {
             $settings = array();
         }
 
-        return array(
+        self::$settings_cache = array(
             'enabled'               => isset($settings['enabled']) ? $settings['enabled'] : get_option('wcs_cashback_enabled', 'yes'),
             'tier_1_threshold'      => isset($settings['tier_1_threshold']) ? floatval($settings['tier_1_threshold']) : floatval(get_option('wcs_tier_1_threshold', 500)),
             'tier_1_percentage'     => isset($settings['tier_1_percentage']) ? floatval($settings['tier_1_percentage']) : floatval(get_option('wcs_tier_1_percentage', 3)),
@@ -43,7 +54,12 @@ class WCS_Cashback_Calculator {
             'brand_rules'           => isset($settings['brand_rules']) ? (array) $settings['brand_rules'] : array(),
             'exclude_sale_items'    => isset($settings['exclude_sale_items']) ? $settings['exclude_sale_items'] : 'yes',
             'allow_course_cashback' => isset($settings['allow_course_cashback']) ? $settings['allow_course_cashback'] : 'no',
+            'disable_earning_when_using_cashback' => isset($settings['disable_earning_when_using_cashback']) ? $settings['disable_earning_when_using_cashback'] : 'yes',
+            'excluded_category_ids' => isset($settings['excluded_category_ids']) ? array_values(array_filter(array_map('absint', (array) $settings['excluded_category_ids']))) : array(),
+            'excluded_brand_ids'    => isset($settings['excluded_brand_ids']) ? array_values(array_filter(array_map('absint', (array) $settings['excluded_brand_ids']))) : array(),
         );
+
+        return self::$settings_cache;
     }
 
     /**
@@ -165,17 +181,18 @@ class WCS_Cashback_Calculator {
      */
     public static function calculate($subtotal, $order = null, $cashback_used = 0) {
         $cashback_used = floatval($cashback_used);
-        
+        $settings = self::get_settings();
+        $disable_earning_when_using_cashback = isset($settings['disable_earning_when_using_cashback']) && $settings['disable_earning_when_using_cashback'] === 'yes';
+
         // If order object is provided, also check its meta
         if ($order instanceof WC_Order && $cashback_used <= 0) {
             $cashback_used = floatval($order->get_meta('_wcs_cashback_used', true));
         }
 
-        if ($cashback_used > 0) {
+        if ($cashback_used > 0 && $disable_earning_when_using_cashback) {
             return 0;
         }
 
-        $settings = self::get_settings();
         if (isset($settings['enabled']) && $settings['enabled'] !== 'yes') {
             return 0;
         }
@@ -196,6 +213,8 @@ class WCS_Cashback_Calculator {
         $use_brands = isset($settings['use_brands_logic']) && $settings['use_brands_logic'] === 'yes';
         $exclude_sale_items = isset($settings['exclude_sale_items']) && $settings['exclude_sale_items'] === 'yes';
         $allow_course_cashback = isset($settings['allow_course_cashback']) && $settings['allow_course_cashback'] === 'yes';
+        $excluded_category_ids = isset($settings['excluded_category_ids']) ? (array) $settings['excluded_category_ids'] : array();
+        $excluded_brand_ids = isset($settings['excluded_brand_ids']) ? (array) $settings['excluded_brand_ids'] : array();
         $subtotal = floatval($subtotal);
         $cashback_used = floatval($cashback_used);
 
@@ -205,7 +224,13 @@ class WCS_Cashback_Calculator {
         // Calculate a pay ratio if cashback was used, to reduce basis for each product
         // E.g. Subtotal 2000, Used 40. Ratio = (2000-40)/2000 = 0.98
         // Each item price will be multiplied by 0.98 for cashback purposes.
-        $total_subtotal = ($order instanceof WC_Order) ? floatval($order->get_subtotal()) : $subtotal;
+        if ($order instanceof WC_Order) {
+            $total_subtotal = floatval($order->get_subtotal());
+        } elseif (function_exists('WC') && WC()->cart) {
+            $total_subtotal = floatval(WC()->cart->get_subtotal());
+        } else {
+            $total_subtotal = $subtotal;
+        }
         if ($cashback_used > 0 && $total_subtotal > 0) {
             $pay_ratio = ($total_subtotal - $cashback_used) / $total_subtotal;
         } else {
@@ -254,6 +279,9 @@ class WCS_Cashback_Calculator {
         $eligible_items = array();
         $has_sale_items = false;
         $has_course_items = false;
+        $has_excluded_category_items = false;
+        $has_excluded_brand_items = false;
+        $brand_taxonomy = isset($settings['brand_taxonomy']) ? $settings['brand_taxonomy'] : 'product_brand';
         foreach ($items as $item) {
             if (!empty($item['is_sale'])) {
                 $has_sale_items = true;
@@ -261,6 +289,21 @@ class WCS_Cashback_Calculator {
             if (self::is_course_product($item['id'])) {
                 $has_course_items = true;
             }
+
+            if (!empty($excluded_category_ids)) {
+                $product_category_ids = wc_get_product_cat_ids($item['id']);
+                if (!empty(array_intersect($product_category_ids, $excluded_category_ids))) {
+                    $has_excluded_category_items = true;
+                }
+            }
+
+            if (!empty($excluded_brand_ids) && taxonomy_exists($brand_taxonomy)) {
+                $product_brand_ids = wp_get_post_terms($item['id'], $brand_taxonomy, array('fields' => 'ids'));
+                if (!is_wp_error($product_brand_ids) && !empty(array_intersect($product_brand_ids, $excluded_brand_ids))) {
+                    $has_excluded_brand_items = true;
+                }
+            }
+
             $eligible_items[] = $item;
         }
 
@@ -273,6 +316,10 @@ class WCS_Cashback_Calculator {
         // Course products never accrue cashback. If such a product is in the cart/order,
         // cashback for the purchase is blocked entirely.
         if (!$allow_course_cashback && $has_course_items) {
+            return 0;
+        }
+
+        if ($has_excluded_category_items || $has_excluded_brand_items) {
             return 0;
         }
 
@@ -296,7 +343,6 @@ class WCS_Cashback_Calculator {
 
         // --- BRANDS LOGIC ON ---
         $total_cashback = 0;
-        $brand_taxonomy = isset($settings['brand_taxonomy']) ? $settings['brand_taxonomy'] : 'product_brand';
         $rules = isset($settings['brand_rules']) ? (array)$settings['brand_rules'] : array();
         
         // Strictly use the global tier percentage for all 'default' items
@@ -387,5 +433,16 @@ class WCS_Cashback_Calculator {
         }
 
         return $tiers;
+    }
+
+    /**
+     * Whether earning cashback should be blocked when cashback was used.
+     *
+     * @return bool
+     */
+    public static function should_disable_earning_when_using_cashback() {
+        $settings = self::get_settings();
+
+        return isset($settings['disable_earning_when_using_cashback']) && $settings['disable_earning_when_using_cashback'] === 'yes';
     }
 }

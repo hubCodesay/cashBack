@@ -12,6 +12,9 @@
 	var isBlocksMode = false;
 	var debounceTimer = null;
 	var ajaxInProgress = false;
+	var observerStarted = false;
+	var lastRefreshAt = 0;
+	var lastStateKey = '';
 
 	/* ═══════════════════════════════════════════════════════
 	 *  INITIALIZATION
@@ -133,6 +136,9 @@
 	 *  MUTATION OBSERVER — re-inject after blocks re-render
 	 * ═══════════════════════════════════════════════════════ */
 	function startObserving() {
+		if (observerStarted) return;
+		observerStarted = true;
+
 		var containerSelectors = [
 			'.wp-block-woocommerce-cart',
 			'.wp-block-woocommerce-checkout',
@@ -153,13 +159,30 @@
 			container = document.querySelector('.entry-content') || document.querySelector('#content') || document.body;
 		}
 
-		var observer = new MutationObserver(function () {
+		var observer = new MutationObserver(function (mutations) {
+			var shouldCheck = false;
+			for (var i = 0; i < mutations.length; i++) {
+				if (mutations[i].addedNodes.length || mutations[i].removedNodes.length) {
+					shouldCheck = true;
+					break;
+				}
+			}
+
+			if (!shouldCheck) return;
+
 			if (debounceTimer) clearTimeout(debounceTimer);
 			debounceTimer = setTimeout(function () {
 				var needsBlock   = ($('.wcs-cashback-block:visible').length === 0);
 				var needsEarning = ($('.wcs-potential-earning-block').length === 0);
+				var stateKey = [
+					window.location.pathname,
+					needsBlock ? '1' : '0',
+					needsEarning ? '1' : '0',
+					$('.wc-block-components-totals-wrapper').length,
+					$('.wc-block-checkout__sidebar').length
+				].join(':');
 
-				if (needsBlock || needsEarning) {
+				if ((needsBlock || needsEarning) && shouldRefresh(stateKey)) {
 					refreshViaAjax();
 				}
 			}, 800); // Slightly longer debounce for slower themes
@@ -174,6 +197,7 @@
 	function refreshViaAjax() {
 		if (ajaxInProgress) return;
 		ajaxInProgress = true;
+		lastRefreshAt = Date.now();
 
 		var context = ($('.wp-block-woocommerce-cart, .wc-block-cart').length > 0) ? 'cart' : 'checkout';
 
@@ -214,6 +238,20 @@
 		}).fail(function () {
 			ajaxInProgress = false;
 		});
+	}
+
+	function shouldRefresh(stateKey) {
+		var now = Date.now();
+		if ((now - lastRefreshAt) < 2500) {
+			return false;
+		}
+
+		if (stateKey === lastStateKey) {
+			return false;
+		}
+
+		lastStateKey = stateKey;
+		return true;
 	}
 
 	/* ═══════════════════════════════════════════════════════

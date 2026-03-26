@@ -1,10 +1,11 @@
 <?php
 /**
- * Plugin Name: WooCommerce Cashback System
+ * Plugin Name: Cash Back
  * Plugin URI: https://example.com/woo-cashback-system
  * Description: A comprehensive cashback system for WooCommerce that allows users to earn and spend cashback on purchases with configurable rates and limits.
- * Version: 1.0.0
- * Author: Your Name
+ * Version: 1.0.2
+ * Author: Андрей
+ * Company: Stadion
  * Author URI: https://example.com
  * Text Domain: woo-cashback-system
  * Domain Path: /languages
@@ -23,7 +24,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('WCS_VERSION', '1.0.0');
+define('WCS_VERSION', '1.0.2');
 define('WCS_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('WCS_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('WCS_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -81,6 +82,9 @@ function wcs_activate_plugin() {
         'enable_notifications' => 'yes',
         'exclude_sale_items' => 'yes',
         'allow_course_cashback' => 'no',
+        'disable_earning_when_using_cashback' => 'yes',
+        'excluded_category_ids' => array(),
+        'excluded_brand_ids' => array(),
     );
     
     if (!get_option('wcs_cashback_settings')) {
@@ -129,8 +133,6 @@ function wcs_init_plugin() {
     WCS_Cashback_Notifications::get_instance();
     WCS_VIP_Discounts::get_instance();
     
-    // Self-healing: Ensure tables exist (in case activation hook didn't fire during development)
-    WCS_Cashback_Database::create_tables();
 }
 add_action('plugins_loaded', 'wcs_init_plugin', 5);
 
@@ -171,8 +173,8 @@ add_action('admin_enqueue_scripts', 'wcs_admin_scripts');
  */
 function wcs_public_scripts() {
     if (is_account_page() || is_checkout() || is_cart()) {
-        wp_enqueue_style('wcs-public-style', WCS_PLUGIN_URL . 'public/css/public-style.css', array(), time());
-        wp_enqueue_script('wcs-public-script', WCS_PLUGIN_URL . 'public/js/public-script.js', array('jquery'), time() + 3, true);
+        wp_enqueue_style('wcs-public-style', WCS_PLUGIN_URL . 'public/css/public-style.css', array(), WCS_VERSION);
+        wp_enqueue_script('wcs-public-script', WCS_PLUGIN_URL . 'public/js/public-script.js', array('jquery'), WCS_VERSION, true);
         
         $settings = get_option('wcs_cashback_settings');
         $cart_position = isset($settings['cart_position']) ? $settings['cart_position'] : 'woocommerce_cart_totals_before_order_total';

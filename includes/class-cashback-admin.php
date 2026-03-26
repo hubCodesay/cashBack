@@ -141,6 +141,9 @@ class WCS_Cashback_Admin {
 
         if (isset($input['allow_course_cashback'])) $sanitized['allow_course_cashback'] = 'yes';
         elseif (isset($_POST['_wp_http_referer']) && strpos($_POST['_wp_http_referer'], 'tab=general') !== false) $sanitized['allow_course_cashback'] = 'no';
+
+        if (isset($input['disable_earning_when_using_cashback'])) $sanitized['disable_earning_when_using_cashback'] = 'yes';
+        elseif (isset($_POST['_wp_http_referer']) && strpos($_POST['_wp_http_referer'], 'tab=general') !== false) $sanitized['disable_earning_when_using_cashback'] = 'no';
         
         $is_brands_tab = isset($_POST['_wp_http_referer']) && strpos($_POST['_wp_http_referer'], 'tab=brands') !== false;
 
@@ -163,6 +166,16 @@ class WCS_Cashback_Admin {
         if (isset($input['default_percentage'])) $sanitized['default_percentage'] = floatval($input['default_percentage']);
         if (isset($input['use_brands_logic'])) $sanitized['use_brands_logic'] = 'yes';
         elseif ($is_brands_tab) $sanitized['use_brands_logic'] = 'no';
+        if (isset($input['excluded_category_ids'])) {
+            $sanitized['excluded_category_ids'] = array_values(array_filter(array_map('intval', (array) $input['excluded_category_ids'])));
+        } elseif ($is_brands_tab) {
+            $sanitized['excluded_category_ids'] = array();
+        }
+        if (isset($input['excluded_brand_ids'])) {
+            $sanitized['excluded_brand_ids'] = array_values(array_filter(array_map('intval', (array) $input['excluded_brand_ids'])));
+        } elseif ($is_brands_tab) {
+            $sanitized['excluded_brand_ids'] = array();
+        }
         
         if (isset($input['cart_position'])) {
             $allowed_cart_positions = array('woocommerce_cart_totals_before_order_total', 'none');
@@ -207,6 +220,7 @@ class WCS_Cashback_Admin {
                 'enable_notifications' => 'yes',
                 'exclude_sale_items' => 'yes',
                 'allow_course_cashback' => 'no',
+                'disable_earning_when_using_cashback' => 'yes',
                 // New display settings
                 'cart_position' => 'woocommerce_cart_totals_before_order_total',
                 'checkout_position' => 'woocommerce_review_order_before_payment',
@@ -214,7 +228,9 @@ class WCS_Cashback_Admin {
                 'use_brands_logic' => 'no',
                 'brand_taxonomy' => 'product_brand',
                 'brand_rules' => array(),
-                'default_percentage' => 5
+                'default_percentage' => 5,
+                'excluded_category_ids' => array(),
+                'excluded_brand_ids' => array(),
             );
         }
         
@@ -227,6 +243,9 @@ class WCS_Cashback_Admin {
         $settings['default_percentage'] = isset($settings['default_percentage']) ? floatval($settings['default_percentage']) : 5;
         $settings['exclude_sale_items'] = isset($settings['exclude_sale_items']) ? $settings['exclude_sale_items'] : 'yes';
         $settings['allow_course_cashback'] = isset($settings['allow_course_cashback']) ? $settings['allow_course_cashback'] : 'no';
+        $settings['disable_earning_when_using_cashback'] = isset($settings['disable_earning_when_using_cashback']) ? $settings['disable_earning_when_using_cashback'] : 'yes';
+        $settings['excluded_category_ids'] = isset($settings['excluded_category_ids']) ? (array) $settings['excluded_category_ids'] : array();
+        $settings['excluded_brand_ids'] = isset($settings['excluded_brand_ids']) ? (array) $settings['excluded_brand_ids'] : array();
         
         ?>
         <div class="wrap">
@@ -323,6 +342,15 @@ class WCS_Cashback_Admin {
                             <p class="description">Якщо увімкнено, кешбек буде нараховуватися на товари, прив'язані до курсів SmartLearn LMS. Якщо вимкнено, на курси кешбек не нараховується.</p>
                         </td>
                     </tr>
+                    <tr>
+                        <th scope="row">
+                            <label for="disable_earning_when_using_cashback">💳 Використання кешбеку</label>
+                        </th>
+                        <td>
+                            <input type="checkbox" name="wcs_cashback_settings[disable_earning_when_using_cashback]" id="disable_earning_when_using_cashback" value="yes" <?php checked($settings['disable_earning_when_using_cashback'], 'yes'); ?>>
+                            <p class="description">Якщо увімкнено, коли клієнт використовує свій кешбек у замовленні, новий кешбек за це замовлення не нараховується. Якщо вимкнено, кешбек рахується на залишок суми після списання.</p>
+                        </td>
+                    </tr>
                 </table>
 
                 <?php elseif ($active_tab == 'brands'): ?>
@@ -351,6 +379,44 @@ class WCS_Cashback_Admin {
                                     }
                                     ?>
                                 </select>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="excluded_category_ids">🚫 Виключені категорії</label></th>
+                            <td>
+                                <select name="wcs_cashback_settings[excluded_category_ids][]" id="excluded_category_ids" multiple style="width: 100%; max-width: 520px; min-height: 140px;">
+                                    <?php
+                                    $product_categories = get_terms(array(
+                                        'taxonomy' => 'product_cat',
+                                        'hide_empty' => false,
+                                    ));
+                                    if (!is_wp_error($product_categories)) {
+                                        foreach ($product_categories as $category) {
+                                            echo '<option value="' . esc_attr($category->term_id) . '" ' . selected(in_array((int) $category->term_id, array_map('intval', $settings['excluded_category_ids']), true), true, false) . '>' . esc_html($category->name) . '</option>';
+                                        }
+                                    }
+                                    ?>
+                                </select>
+                                <p class="description">Якщо товар у кошику має хоча б одну з цих категорій, кешбек на все замовлення не нараховується.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="excluded_brand_ids">🚫 Виключені бренди</label></th>
+                            <td>
+                                <select name="wcs_cashback_settings[excluded_brand_ids][]" id="excluded_brand_ids" multiple style="width: 100%; max-width: 520px; min-height: 140px;">
+                                    <?php
+                                    $excluded_brand_terms = taxonomy_exists($settings['brand_taxonomy']) ? get_terms(array(
+                                        'taxonomy' => $settings['brand_taxonomy'],
+                                        'hide_empty' => false,
+                                    )) : array();
+                                    if (!is_wp_error($excluded_brand_terms)) {
+                                        foreach ($excluded_brand_terms as $term) {
+                                            echo '<option value="' . esc_attr($term->term_id) . '" ' . selected(in_array((int) $term->term_id, array_map('intval', $settings['excluded_brand_ids']), true), true, false) . '>' . esc_html($term->name) . '</option>';
+                                        }
+                                    }
+                                    ?>
+                                </select>
+                                <p class="description">Якщо товар у кошику має хоча б один з цих брендів, кешбек на все замовлення не нараховується.</p>
                             </td>
                         </tr>
                     </table>

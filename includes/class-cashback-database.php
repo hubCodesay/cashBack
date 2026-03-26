@@ -10,6 +10,19 @@ if (!defined('ABSPATH')) {
 }
 
 class WCS_Cashback_Database {
+    /**
+     * Request-level cache for balances.
+     *
+     * @var array<int, object>
+     */
+    private static $balance_cache = array();
+
+    /**
+     * Cache table existence checks within the current request.
+     *
+     * @var array<string, bool>
+     */
+    private static $table_exists_cache = array();
     
     /**
      * Create database tables
@@ -61,6 +74,28 @@ class WCS_Cashback_Database {
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
         dbDelta($sql_balances);
         dbDelta($sql_transactions);
+
+        self::$table_exists_cache[$table_balances] = true;
+        self::$table_exists_cache[$table_transactions] = true;
+    }
+
+    /**
+     * Check whether a custom table exists.
+     *
+     * @param string $table_name
+     * @return bool
+     */
+    private static function table_exists($table_name) {
+        global $wpdb;
+
+        if (isset(self::$table_exists_cache[$table_name])) {
+            return self::$table_exists_cache[$table_name];
+        }
+
+        $exists = ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table_name)) === $table_name);
+        self::$table_exists_cache[$table_name] = $exists;
+
+        return $exists;
     }
     
     /**
@@ -68,8 +103,25 @@ class WCS_Cashback_Database {
      */
     public static function get_user_balance($user_id) {
         global $wpdb;
+        $user_id = absint($user_id);
+        if ($user_id <= 0) {
+            return (object) array(
+                'user_id' => 0,
+                'balance' => 0.00,
+                'total_earned' => 0.00,
+                'total_spent' => 0.00,
+                'max_limit' => null,
+                'created_at' => current_time('mysql'),
+                'updated_at' => current_time('mysql')
+            );
+        }
+
+        if (isset(self::$balance_cache[$user_id])) {
+            return self::$balance_cache[$user_id];
+        }
+
         $table = $wpdb->prefix . 'wcs_cashback_balances';
-        
+
         $balance = $wpdb->get_row($wpdb->prepare(
             "SELECT * FROM $table WHERE user_id = %d",
             $user_id
@@ -96,7 +148,8 @@ class WCS_Cashback_Database {
                 );
             }
         }
-        
+
+        self::$balance_cache[$user_id] = $balance;
         return $balance;
     }
     
@@ -105,10 +158,11 @@ class WCS_Cashback_Database {
      */
     public static function create_user_balance($user_id) {
         global $wpdb;
+        $user_id = absint($user_id);
         $table = $wpdb->prefix . 'wcs_cashback_balances';
-        
+
         // Ensure table exists
-        if ($wpdb->get_var("SHOW TABLES LIKE '$table'") !== $table) {
+        if (!self::table_exists($table)) {
             self::create_tables();
         }
         
@@ -139,7 +193,8 @@ class WCS_Cashback_Database {
             error_log('WCS Cashback: Failed to create user balance for user ' . $user_id . ': ' . $wpdb->last_error);
             return false;
         }
-        
+
+        unset(self::$balance_cache[$user_id]);
         return $wpdb->insert_id;
     }
     
@@ -148,10 +203,12 @@ class WCS_Cashback_Database {
      */
     public static function update_balance($user_id, $amount, $type = 'earned') {
         global $wpdb;
+        $user_id = absint($user_id);
+        $amount = floatval($amount);
         $table = $wpdb->prefix . 'wcs_cashback_balances';
-        
+
         // Ensure table exists
-        if ($wpdb->get_var("SHOW TABLES LIKE '$table'") !== $table) {
+        if (!self::table_exists($table)) {
             self::create_tables();
         }
         
@@ -205,7 +262,18 @@ class WCS_Cashback_Database {
         if ($result === false && !empty($wpdb->last_error)) {
             error_log('WCS Cashback DB Error: ' . $wpdb->last_error);
         }
-        
+
+        if ($result !== false) {
+            $current->balance = $new_balance;
+            if ($type === 'earned') {
+                $current->total_earned = floatval($current->total_earned) + $amount;
+            } elseif ($type === 'spent') {
+                $current->total_spent = floatval($current->total_spent) + $amount;
+            }
+            $current->updated_at = current_time('mysql');
+            self::$balance_cache[$user_id] = $current;
+        }
+
         return $new_balance;
     }
     
